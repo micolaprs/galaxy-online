@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Net.Http.Json;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -26,19 +27,30 @@ public sealed class LlmClient(HttpClient http, LlmConfig config, ILogger<LlmClie
             max_tokens  = config.MaxTokens,
         };
 
-        logger.LogDebug("Calling LLM model={Model} messages={Count}", config.Model, messages.Count);
+        int inputChars = messages.Sum(m => m.Content.Length);
+        logger.LogInformation(
+            "⏳ LLM request → model={Model} messages={Count} inputChars={Chars} maxTokens={Max}",
+            config.Model, messages.Count, inputChars, config.MaxTokens);
 
+        var sw = Stopwatch.StartNew();
         using var response = await http.PostAsJsonAsync("chat/completions", request, JsonOpts, ct);
         response.EnsureSuccessStatusCode();
 
         var result = await response.Content.ReadFromJsonAsync<ChatCompletionResponse>(JsonOpts, ct);
+        sw.Stop();
+
         if (result?.Choices is not { Count: > 0 })
         {
             var raw = await response.Content.ReadAsStringAsync(ct);
             throw new InvalidOperationException($"LLM returned no choices. Body: {raw}");
         }
 
-        return result.Choices[0].Message.Content;
+        var text = result.Choices[0].Message.Content;
+        logger.LogInformation(
+            "✅ LLM response ← {Ms}ms, {Chars} chars",
+            sw.ElapsedMilliseconds, text.Length);
+
+        return text;
     }
 }
 

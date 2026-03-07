@@ -9,6 +9,11 @@ export class ApiClient {
     return this.get('/api/games');
   }
 
+  async deleteAllGames(): Promise<void> {
+    const r = await fetch(this.base + '/api/games', { method: 'DELETE' });
+    if (!r.ok) throw new Error(`DELETE /api/games failed: ${r.status}`);
+  }
+
   async getGame(id: string): Promise<GameDetail> {
     return this.get(`/api/games/${id}`);
   }

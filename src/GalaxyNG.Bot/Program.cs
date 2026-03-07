@@ -1,9 +1,17 @@
 using GalaxyNG.Bot;
+using GalaxyNG.Bot.Services;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 
 var host = Host.CreateDefaultBuilder(args)
+    .ConfigureLogging((ctx, logging) =>
+    {
+        // Forward every bot log line to the server's web console (fire-and-forget)
+        var serverUrl = ctx.Configuration["Bot:ServerUrl"] ?? "http://localhost:5055";
+        var raceName  = ctx.Configuration["Bot:RaceName"]  ?? "Bot";
+        logging.AddProvider(new RemoteLoggerProvider(serverUrl, raceName));
+    })
     .ConfigureServices((ctx, services) =>
     {
         var cfg = ctx.Configuration;

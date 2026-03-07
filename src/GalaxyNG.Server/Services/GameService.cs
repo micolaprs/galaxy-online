@@ -18,6 +18,20 @@ public sealed class GameService(
     private readonly Dictionary<string, Game> _cache = [];
     private readonly SemaphoreSlim            _lock  = new(1, 1);
 
+    // ---- Admin ----
+
+    public async Task DeleteAllGamesAsync(CancellationToken ct = default)
+    {
+        await _lock.WaitAsync(ct);
+        try
+        {
+            _cache.Clear();
+            await store.DeleteAllAsync(ct);
+            logger.LogInformation("All games deleted.");
+        }
+        finally { _lock.Release(); }
+    }
+
     // ---- Game lifecycle ----
 
     public async Task<Game> CreateGameAsync(
@@ -115,7 +129,7 @@ public sealed class GameService(
                 .SendAsync("PlayerSubmitted", new { raceName }, ct);
 
         if (game.AutoRunOnAllSubmitted && game.AllPlayersSubmitted())
-            _ = Task.Run(() => RunTurnAsync(gameId, ct), ct);
+            _ = Task.Run(() => RunTurnAsync(gameId, CancellationToken.None), CancellationToken.None);
 
         return (true, null);
     }
@@ -176,6 +190,24 @@ public sealed class GameService(
 
         processor.RunTurn(clone);
         return reporter.GenerateTurnReport(clone, clone.GetPlayer(player.Id)!);
+    }
+
+    // ---- Bot status ----
+
+    public async Task BroadcastBotStatusAsync(
+        string gameId, string raceName, string status, string? detail,
+        CancellationToken ct = default)
+    {
+        logger.LogInformation("Bot {Race} status: {Status}{Detail}",
+            raceName, status, detail is not null ? $" — {detail}" : "");
+
+        await hub.Clients.Group(gameId).SendAsync("BotStatusUpdate", new
+        {
+            raceName,
+            status,
+            detail,
+            time = DateTimeOffset.UtcNow.ToString("HH:mm:ss"),
+        }, ct);
     }
 
     // ---- helpers ----

@@ -37,6 +37,10 @@ public sealed class Game
     public IEnumerable<Group> GroupsOf(string playerId) =>
         Players.TryGetValue(playerId, out var pl) ? pl.Groups : [];
 
+    /// <summary>
+    /// Returns true when every active (non-eliminated) player — human OR bot —
+    /// has explicitly submitted their orders. Bots must submit just like humans.
+    /// </summary>
     public bool AllPlayersSubmitted() =>
-        Players.Values.All(p => p.IsEliminated || p.IsBot || p.Submitted);
+        Players.Values.All(p => p.IsEliminated || p.Submitted);
 }

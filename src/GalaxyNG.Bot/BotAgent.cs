@@ -19,17 +19,24 @@ public sealed class BotAgent(
         logger.LogInformation("Bot {Race} starting turn cycle for game {Game}", config.RaceName, config.GameId);
 
         // 1. Get turn report
+        await PostBotStatusAsync("reading-report", null, ct);
+        logger.LogInformation("📋 Fetching turn report from server…");
         string report = await GetReportAsync(ct);
         if (string.IsNullOrWhiteSpace(report))
         {
             logger.LogWarning("Could not retrieve turn report.");
+            await PostBotStatusAsync("idle", "no report", ct);
             return;
         }
+        logger.LogInformation("📋 Got turn report ({Lines} lines)", report.Split('\n').Length);
 
         // 2. Ask LLM for orders (with retry on validation failure)
         string orders = "";
         for (int attempt = 1; attempt <= 3; attempt++)
         {
+            await PostBotStatusAsync("thinking", $"LLM call attempt {attempt}", ct);
+            logger.LogInformation("Bot {Race} calling LLM (attempt {Attempt})", config.RaceName, attempt);
+
             var messages = new List<ChatMessage>
             {
                 ChatMessage.System(StrategyPrompt.System),
@@ -44,22 +51,28 @@ public sealed class BotAgent(
 
             string raw = await llm.CompleteAsync(messages, ct);
             orders = ExtractOrders(raw);
+            int orderLines = orders.Split('\n', StringSplitOptions.RemoveEmptyEntries).Length;
+            logger.LogInformation("📝 Extracted {Lines} order lines", orderLines);
 
             // 3. Validate
+            await PostBotStatusAsync("validating", $"attempt {attempt}", ct);
+            logger.LogInformation("🔍 Validating orders with server…");
             var validation = await ValidateOrdersAsync(orders, ct);
             if (validation.StartsWith("OK", StringComparison.OrdinalIgnoreCase))
             {
-                logger.LogInformation("Bot orders validated on attempt {Attempt}", attempt);
+                logger.LogInformation("✅ Orders validated on attempt {Attempt}", attempt);
                 break;
             }
 
-            logger.LogWarning("Validation failed (attempt {Attempt}): {Error}", attempt, validation);
-            if (attempt == 3) logger.LogError("Giving up after 3 attempts — submitting best effort.");
+            logger.LogWarning("⚠️ Validation failed (attempt {Attempt}): {Error}", attempt, validation);
+            if (attempt == 3) logger.LogError("❌ Giving up after 3 attempts — submitting best effort.");
         }
 
         // 4. Submit
+        await PostBotStatusAsync("submitting", null, ct);
         await SubmitOrdersAsync(orders, final: true, ct);
         logger.LogInformation("Bot {Race} submitted orders for game {Game}", config.RaceName, config.GameId);
+        await PostBotStatusAsync("submitted", null, ct);
     }
 
     /// <summary>Loop: poll server for new turns and play automatically.</summary>
@@ -67,6 +80,7 @@ public sealed class BotAgent(
     {
         int lastTurn = -1;
         logger.LogInformation("Bot {Race} entering game loop", config.RaceName);
+        await PostBotStatusAsync("idle", "waiting for first turn", ct);
 
         while (!ct.IsCancellationRequested)
         {
@@ -78,12 +92,17 @@ public sealed class BotAgent(
                     lastTurn = turn;
                     await RunTurnAsync(ct);
                 }
-                await Task.Delay(TimeSpan.FromSeconds(30), ct);
+                else
+                {
+                    await PostBotStatusAsync("waiting", $"turn {turn}", ct);
+                }
+                await Task.Delay(TimeSpan.FromSeconds(5), ct);
             }
             catch (OperationCanceledException) { break; }
             catch (Exception ex)
             {
                 logger.LogError(ex, "Bot loop error — retrying in 60s");
+                await PostBotStatusAsync("error", ex.Message, ct);
                 await Task.Delay(TimeSpan.FromSeconds(60), ct);
             }
         }
@@ -123,6 +142,20 @@ public sealed class BotAgent(
         var url  = $"{config.ServerUrl}/api/games/{config.GameId}";
         var json = await Http.GetFromJsonAsync<JsonElement>(url, ct);
         return json.GetProperty("turn").GetInt32();
+    }
+
+    private async Task PostBotStatusAsync(string status, string? detail, CancellationToken ct)
+    {
+        try
+        {
+            var url  = $"{config.ServerUrl}/api/games/{config.GameId}/bot-status";
+            var body = new { raceName = config.RaceName, status, detail };
+            await Http.PostAsJsonAsync(url, body, ct);
+        }
+        catch (Exception ex)
+        {
+            logger.LogDebug("Could not post bot status: {Msg}", ex.Message);
+        }
     }
 
     private static string ExtractOrders(string llmResponse)

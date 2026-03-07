@@ -2,7 +2,8 @@
 # demo.sh — запуск тестовой игры
 # Использование:
 #   ./scripts/demo.sh              # 1 человек + 3 бота
-#   ./scripts/demo.sh -b           # только боты (4 бота, ходы идут автоматически)
+#   ./scripts/demo.sh -b           # только боты (3 бота, ходы идут автоматически)
+#   ./scripts/demo.sh -b -n 5      # только боты, 5 ботов
 #   ./scripts/demo.sh -s 400       # размер галактики
 #   ./scripts/demo.sh -b -s 300    # только боты + размер
 
@@ -12,17 +13,20 @@ set -euo pipefail
 GALAXY_SIZE=200
 BOTS_ONLY=false
 OPEN_BROWSER=false
+NUM_BOTS=3
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     -b|--bots-only) BOTS_ONLY=true ; shift ;;
+    -n|--bots)      NUM_BOTS="$2"; shift 2 ;;
     -s|--size)      GALAXY_SIZE="$2"; shift 2 ;;
     -o|--open)      OPEN_BROWSER=true; shift ;;
     -h|--help)
-      echo "Использование: $0 [-b] [-s SIZE] [-o]"
-      echo "  -b, --bots-only   Все игроки — боты (без человека)"
-      echo "  -s, --size SIZE   Размер галактики (по умолчанию: 200)"
-      echo "  -o, --open        Открыть браузер после запуска"
+      echo "Использование: $0 [-b] [-n NUM_BOTS] [-s SIZE] [-o]"
+      echo "  -b, --bots-only       Все игроки — боты (без человека)"
+      echo "  -n, --bots NUM_BOTS   Количество ботов (по умолчанию: 3)"
+      echo "  -s, --size SIZE       Размер галактики (по умолчанию: 200)"
+      echo "  -o, --open            Открыть браузер после запуска"
       exit 0 ;;
     *) echo "Неизвестный флаг: $1" >&2; exit 1 ;;
   esac
@@ -34,16 +38,31 @@ GAME_NAME="Demo"
 HUMAN="Humans"
 HUMAN_PW="pw1"
 
+BOT_NAME_POOL=("Alpha" "Beta" "Gamma" "Delta" "Epsilon" "Zeta" "Eta" "Theta")
+BOT_PW_POOL=("pw1" "pw2" "pw3" "pw4" "pw5" "pw6" "pw7" "pw8")
+
 if $BOTS_ONLY; then
-  ALL_NAMES=("Alpha" "Beta" "Gamma" "Delta")
-  ALL_PWS=("pw1" "pw2" "pw3" "pw4")
-  BOT_NAMES=("${ALL_NAMES[@]}")
-  BOT_PWS=("${ALL_PWS[@]}")
+  ALL_NAMES=()
+  ALL_PWS=()
+  BOT_NAMES=()
+  BOT_PWS=()
+  for i in $(seq 0 $((NUM_BOTS - 1))); do
+    ALL_NAMES+=("${BOT_NAME_POOL[$i]}")
+    ALL_PWS+=("${BOT_PW_POOL[$i]}")
+    BOT_NAMES+=("${BOT_NAME_POOL[$i]}")
+    BOT_PWS+=("${BOT_PW_POOL[$i]}")
+  done
 else
-  ALL_NAMES=("$HUMAN" "Alpha" "Beta" "Gamma")
-  ALL_PWS=("$HUMAN_PW" "pw2" "pw3" "pw4")
-  BOT_NAMES=("Alpha" "Beta" "Gamma")
-  BOT_PWS=("pw2" "pw3" "pw4")
+  ALL_NAMES=("$HUMAN")
+  ALL_PWS=("$HUMAN_PW")
+  BOT_NAMES=()
+  BOT_PWS=()
+  for i in $(seq 0 $((NUM_BOTS - 1))); do
+    ALL_NAMES+=("${BOT_NAME_POOL[$i]}")
+    ALL_PWS+=("${BOT_PW_POOL[$((i+1))]}")
+    BOT_NAMES+=("${BOT_NAME_POOL[$i]}")
+    BOT_PWS+=("${BOT_PW_POOL[$((i+1))]}")
+  done
 fi
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -117,7 +136,7 @@ done
 echo ""
 
 # ── Шаг 3: создание игры ─────────────────────────────────────────────────────
-info "Шаг 3/5 — Создание игры «$GAME_NAME» (размер: $GALAXY_SIZE)…"
+info "Шаг 3/5 — Создание игры «${GAME_NAME}» (размер: ${GALAXY_SIZE})…"
 
 # Формируем JSON-массив игроков
 PLAYERS_JSON="["

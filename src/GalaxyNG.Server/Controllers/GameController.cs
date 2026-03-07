@@ -36,6 +36,14 @@ public sealed class GameController(GameService svc) : ControllerBase
         });
     }
 
+    // DELETE /api/games — wipe all saved games (dev/admin use)
+    [HttpDelete]
+    public async Task<IActionResult> DeleteAllGames(CancellationToken ct)
+    {
+        await svc.DeleteAllGamesAsync(ct);
+        return Ok(new { message = "All games deleted." });
+    }
+
     // GET /api/games — list all games
     [HttpGet]
     public async Task<IActionResult> ListGames(CancellationToken ct)
@@ -133,6 +141,15 @@ public sealed class GameController(GameService svc) : ControllerBase
         return ok ? Ok(new { message = "Turn completed." })
                   : BadRequest(new { error });
     }
+
+    // POST /api/games/{id}/bot-status — bot reports its current activity
+    [HttpPost("{id}/bot-status")]
+    public async Task<IActionResult> PostBotStatus(
+        string id, [FromBody] BotStatusRequest req, CancellationToken ct)
+    {
+        await svc.BroadcastBotStatusAsync(id, req.RaceName, req.Status, req.Detail, ct);
+        return Ok();
+    }
 }
 
 // ---- DTOs ----
@@ -153,4 +170,10 @@ public sealed record SubmitOrdersRequest(
     string Password,
     string Orders,
     bool   Final = false
+);
+
+public sealed record BotStatusRequest(
+    string  RaceName,
+    string  Status,
+    string? Detail = null
 );

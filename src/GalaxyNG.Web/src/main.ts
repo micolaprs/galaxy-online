@@ -3,6 +3,7 @@ import { Lobby }    from './components/Lobby.js';
 import { GameView } from './components/GameView.js';
 import { GameList } from './components/GameList.js';
 import { WatchView } from './components/WatchView.js';
+import { QuakeConsole } from './components/QuakeConsole.js';
 import { loadSession, saveSession, sessionFromUrl } from './api/session.js';
 import type { Session } from './types/api.js';
 
@@ -73,5 +74,8 @@ function init(): void {
   // Default: game list
   showGameList();
 }
+
+// Global Quake-style console — always available via ~ key
+new QuakeConsole();
 
 init();

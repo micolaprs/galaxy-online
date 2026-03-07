@@ -1,6 +1,8 @@
 import { api } from '../api/client.js';
-import type { SpectateData, SpectatePlayer, SpectateBattle, SpectateBombing } from '../types/api.js';
+import { ensureConnected } from '../api/hub.js';
+import type { SpectateData, SpectatePlayer, SpectateBattle, SpectateBombing, BotStatusEvent } from '../types/api.js';
 import { GalaxyMap, type MapPlanet } from './GalaxyMap.js';
+import type { HubConnection } from '@microsoft/signalr';
 
 interface TurnEvent {
   turn: number;
@@ -12,6 +14,28 @@ interface TurnEvent {
 // Fixed palette for player colors (up to 8 players)
 const PLAYER_COLORS = ['#4ade80','#38bdf8','#f87171','#facc15','#a78bfa','#fb923c','#34d399','#e879f9'];
 
+const STATUS_LABEL: Record<string, string> = {
+  idle:           '💤 idle',
+  waiting:        '⏳ waiting',
+  'reading-report': '📖 reading report',
+  thinking:       '🧠 thinking…',
+  validating:     '🔍 validating',
+  submitting:     '📤 submitting',
+  submitted:      '✓ submitted',
+  error:          '❌ error',
+};
+
+const STATUS_CSS: Record<string, string> = {
+  idle:           'idle',
+  waiting:        'waiting',
+  'reading-report': 'active',
+  thinking:       'thinking',
+  validating:     'active',
+  submitting:     'active',
+  submitted:      'submitted',
+  error:          'eliminated',
+};
+
 export class WatchView {
   private el: HTMLElement;
   private map!: GalaxyMap;
@@ -20,6 +44,8 @@ export class WatchView {
   private currentTurn = -1;
   private playerColorMap = new Map<string, string>();
   private turnLog: TurnEvent[] = [];
+  private botStatuses = new Map<string, BotStatusEvent>();
+  private hub: HubConnection | null = null;
 
   onBack?: () => void;
 
@@ -29,11 +55,39 @@ export class WatchView {
     this.render();
     void this.refresh();
     this.pollTimer = window.setInterval(() => void this.refresh(), 5_000);
+    void this.connectHub();
   }
 
   destroy(): void {
     if (this.pollTimer) clearInterval(this.pollTimer);
+    if (this.hub) {
+      void this.hub.invoke('LeaveGameGroup', this.gameId).catch(() => {});
+    }
   }
+
+  private async connectHub(): Promise<void> {
+    try {
+      this.hub = await ensureConnected();
+      await this.hub.invoke('JoinGameGroup', this.gameId);
+
+      this.hub.on('BotStatusUpdate', (ev: BotStatusEvent) => {
+        this.botStatuses.set(ev.raceName, ev);
+        this.renderPlayers(this.lastData);
+      });
+
+      this.hub.on('TurnComplete', () => {
+        void this.refresh();
+      });
+
+      this.hub.on('PlayerSubmitted', () => {
+        void this.refresh();
+      });
+    } catch (e) {
+      console.warn('WatchView: SignalR connection failed, using polling only', e);
+    }
+  }
+
+  private lastData: SpectateData | null = null;
 
   private render(): void {
     this.el.innerHTML = `
@@ -64,7 +118,6 @@ export class WatchView {
       </div>
     `;
 
-    // Size canvas to fill its container
     const canvas = this.el.querySelector<HTMLCanvasElement>('#wv-canvas')!;
     const resizeCanvas = () => {
       const col = canvas.parentElement!;
@@ -83,9 +136,10 @@ export class WatchView {
   private async refresh(): Promise<void> {
     try {
       const data = await api.spectate(this.gameId);
+      this.lastData = data;
       this.updateTitle(data);
       this.updatePlayerColors(data.players);
-      this.updatePlayers(data);
+      this.renderPlayers(data);
       this.updateMap(data);
       if (data.turn !== this.currentTurn) {
         this.recordTurnEvent(data);
@@ -102,6 +156,8 @@ export class WatchView {
     this.el.querySelector('#wv-turn')!.textContent  = `Turn ${data.turn}`;
     this.el.querySelector('#wv-ago')!.textContent   =
       data.lastTurnRunAt ? `last turn ${timeAgo(data.lastTurnRunAt)}` : 'no turns yet';
+    this.el.querySelector<HTMLButtonElement>('#btn-run-turn')!.style.display =
+      data.autoRunOnAllSubmitted ? 'none' : '';
   }
 
   private updatePlayerColors(players: SpectatePlayer[]): void {
@@ -111,23 +167,51 @@ export class WatchView {
     });
   }
 
-  private updatePlayers(data: SpectateData): void {
+  private renderPlayers(data: SpectateData | null): void {
+    if (!data) return;
     const el = this.el.querySelector('#wv-players')!;
     el.innerHTML = data.players.map(p => {
-      const color   = this.playerColorMap.get(p.id) ?? '#888';
-      const status  = p.isEliminated ? 'eliminated'
-                    : p.submitted    ? 'submitted'
-                    : 'waiting';
-      const icon    = p.isBot ? '🤖' : '👤';
-      const pct = data.planets.filter(pl => pl.ownerId === p.id).length;
+      const color = this.playerColorMap.get(p.id) ?? '#888';
+      const botEv = this.botStatuses.get(p.name);
+
+      // Determine display status
+      let statusKey: string;
+      let statusText: string;
+      if (p.isEliminated) {
+        statusKey  = 'eliminated';
+        statusText = '✗ out';
+      } else if (botEv && p.isBot) {
+        statusKey  = STATUS_CSS[botEv.status] ?? 'waiting';
+        statusText = STATUS_LABEL[botEv.status] ?? botEv.status;
+      } else if (p.submitted) {
+        statusKey  = 'submitted';
+        statusText = '✓ submitted';
+      } else {
+        statusKey  = 'waiting';
+        statusText = '⏳ waiting';
+      }
+
+      const icon     = p.isBot ? '🤖' : '👤';
+      const detail   = botEv?.detail ? `<span class="wv-player-detail">${esc(botEv.detail)}</span>` : '';
+      const time     = botEv ? `<span class="wv-player-time">${botEv.time}</span>` : '';
+      const thinking = statusKey === 'thinking' ? ' wv-thinking' : '';
+
       return `
-        <div class="wv-player ${status}">
+        <div class="wv-player ${p.isEliminated ? 'eliminated' : ''}">
           <span class="wv-player-dot" style="background:${color}"></span>
           <span class="wv-player-icon">${icon}</span>
-          <span class="wv-player-name">${esc(p.name)}</span>
-          <span class="wv-player-planets">${pct}🌍</span>
-          <span class="wv-player-status ${status}">${statusLabel(status)}</span>
-          <span class="wv-player-tech">D${p.tech.drive.toFixed(1)} W${p.tech.weapons.toFixed(1)} S${p.tech.shields.toFixed(1)}</span>
+          <div class="wv-player-info">
+            <div class="wv-player-row1">
+              <span class="wv-player-name">${esc(p.name)}</span>
+              <span class="wv-player-planets">${p.planetCount}🌍</span>
+              <span class="wv-player-status ${statusKey}${thinking}">${statusText}</span>
+              ${time}
+            </div>
+            ${detail ? `<div class="wv-player-row2">${detail}</div>` : ''}
+            <div class="wv-player-row2 wv-player-tech-row">
+              D${p.tech.drive.toFixed(1)} W${p.tech.weapons.toFixed(1)} S${p.tech.shields.toFixed(1)}
+            </div>
+          </div>
         </div>
       `;
     }).join('');
@@ -139,7 +223,6 @@ export class WatchView {
       return { name: p.name, x: p.x, y: p.y, size: p.size, owner: 'mine', color };
     });
 
-    // Fit canvas size before setting data
     const canvas = this.el.querySelector<HTMLCanvasElement>('#wv-canvas')!;
     const col = canvas.parentElement!;
     if (canvas.width !== col.clientWidth || canvas.height !== col.clientHeight) {
@@ -199,15 +282,8 @@ export class WatchView {
 }
 
 // ---- GalaxyMap extension: support per-planet colors ----
-// We need to pass custom colors. Patch MapPlanet to accept optional color.
 declare module './GalaxyMap.js' {
   interface MapPlanet { color?: string; }
-}
-
-function statusLabel(s: string): string {
-  return s === 'submitted' ? '✓ submitted'
-       : s === 'eliminated' ? '✗ out'
-       : '⏳ waiting';
 }
 
 function esc(s: string): string {

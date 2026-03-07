@@ -39,6 +39,14 @@ public sealed class GameStore(ILogger<GameStore> logger)
         return Directory.GetDirectories(_basePath).Select(Path.GetFileName).OfType<string>();
     }
 
+    public Task DeleteAllAsync(CancellationToken ct = default)
+    {
+        if (Directory.Exists(_basePath))
+            Directory.Delete(_basePath, recursive: true);
+        logger.LogInformation("Deleted all saved games from {Path}", _basePath);
+        return Task.CompletedTask;
+    }
+
     private string GameDir(string id)  => Path.Combine(_basePath, id);
     private string GameFile(string id) => Path.Combine(GameDir(id), "game.json");
 }

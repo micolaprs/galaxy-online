@@ -3,8 +3,14 @@ using GalaxyNG.Server.Data;
 using GalaxyNG.Server.Hubs;
 using GalaxyNG.Server.Mcp;
 using GalaxyNG.Server.Services;
+using Microsoft.AspNetCore.SignalR;
 
 var builder = WebApplication.CreateBuilder(args);
+
+// SignalR log broadcaster — created before Build() so it can be used as a log provider
+var logBroadcaster = new LogBroadcastService();
+builder.Services.AddSingleton(logBroadcaster);
+builder.Logging.AddProvider(new SignalRLoggerProvider(logBroadcaster));
 
 // Engine services
 builder.Services.AddSingleton<GalaxyGenerator>();
@@ -36,6 +42,9 @@ builder.Services.AddCors(o => o.AddDefaultPolicy(p =>
     p.AllowAnyOrigin().AllowAnyMethod().AllowAnyHeader()));
 
 var app = builder.Build();
+
+// Give the log broadcaster a reference to the hub context so it can forward logs
+logBroadcaster.Initialize(app.Services.GetRequiredService<IHubContext<GameHub>>());
 
 app.UseCors();
 app.UseDefaultFiles();

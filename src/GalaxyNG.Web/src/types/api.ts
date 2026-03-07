@@ -70,6 +70,22 @@ export interface SpectatePlanet {
 export interface SpectateBattle  { planetName: string; winner: string; participants: string[]; }
 export interface SpectateBombing { planetName: string; attackerRace: string; previousOwner: string | null; }
 
+// Bot real-time status (via SignalR)
+export interface BotStatusEvent {
+  raceName: string;
+  status: 'idle' | 'waiting' | 'reading-report' | 'thinking' | 'validating' | 'submitting' | 'submitted' | 'error' | string;
+  detail: string | null;
+  time: string;
+}
+
+// Server log entry (via SignalR)
+export interface LogEntry {
+  level: 'Trace' | 'Debug' | 'Information' | 'Warning' | 'Error' | 'Critical' | string;
+  category: string;
+  message: string;
+  time: string;
+}
+
 // Stored in localStorage
 export interface Session {
   gameId: string;

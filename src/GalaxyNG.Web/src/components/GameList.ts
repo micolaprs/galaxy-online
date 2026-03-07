@@ -25,6 +25,7 @@ export class GameList {
         <div class="gl-header">
           <span class="logo-sm">🌌 GalaxyNG</span>
           <button class="btn btn-primary" id="btn-new-game">+ New Game</button>
+          <button class="btn btn-sm btn-danger" id="btn-clear-games" title="Delete all saved games">🗑 Clear all</button>
         </div>
         <div class="gl-body">
           <div class="gl-title">Active Games</div>
@@ -36,6 +37,21 @@ export class GameList {
     `;
     this.el.querySelector('#btn-new-game')!
       .addEventListener('click', () => this.onNewGame?.());
+    this.el.querySelector('#btn-clear-games')!
+      .addEventListener('click', () => this.clearAllGames());
+  }
+
+  private async clearAllGames(): Promise<void> {
+    const btn = this.el.querySelector<HTMLButtonElement>('#btn-clear-games')!;
+    btn.disabled = true;
+    try {
+      await api.deleteAllGames();
+      await this.refresh();
+    } catch (e) {
+      alert(`Failed to clear games: ${e}`);
+    } finally {
+      btn.disabled = false;
+    }
   }
 
   private async refresh(): Promise<void> {
