@@ -11,15 +11,18 @@ set -euo pipefail
 # ── Параметры ────────────────────────────────────────────────────────────────
 GALAXY_SIZE=200
 BOTS_ONLY=false
+OPEN_BROWSER=false
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     -b|--bots-only) BOTS_ONLY=true ; shift ;;
     -s|--size)      GALAXY_SIZE="$2"; shift 2 ;;
+    -o|--open)      OPEN_BROWSER=true; shift ;;
     -h|--help)
-      echo "Использование: $0 [-b] [-s SIZE]"
+      echo "Использование: $0 [-b] [-s SIZE] [-o]"
       echo "  -b, --bots-only   Все игроки — боты (без человека)"
       echo "  -s, --size SIZE   Размер галактики (по умолчанию: 200)"
+      echo "  -o, --open        Открыть браузер после запуска"
       exit 0 ;;
     *) echo "Неизвестный флаг: $1" >&2; exit 1 ;;
   esac
@@ -158,16 +161,22 @@ for i in "${!BOT_NAMES[@]}"; do
 done
 
 # ── Шаг 5: итог ──────────────────────────────────────────────────────────────
+if $BOTS_ONLY; then
+  BROWSER_URL="$SERVER_URL/?watch=$GAME_ID"
+else
+  BROWSER_URL="$SERVER_URL/?game=$GAME_ID&race=$HUMAN&pw=$HUMAN_PW"
+fi
+
 echo ""
 echo -e "${GREEN}═══════════════════════════════════════════════════════${NC}"
 ok "Игра готова!"
 echo ""
 if $BOTS_ONLY; then
   ok "Режим: только боты (autoRun=true, ходы идут автоматически)"
-else
-  echo "  Откройте браузер:"
-  echo -e "  ${CYAN}$SERVER_URL/?game=$GAME_ID&race=$HUMAN&pw=$HUMAN_PW${NC}"
 fi
+echo ""
+echo "  Открыть в браузере:"
+echo -e "  ${CYAN}$BROWSER_URL${NC}"
 echo ""
 echo "  Логи:"
 echo "    Сервер: /tmp/galaxyng-server.log"
@@ -177,6 +186,20 @@ done
 echo ""
 warn "Нажмите Ctrl+C для остановки всех процессов."
 echo -e "${GREEN}═══════════════════════════════════════════════════════${NC}"
+
+# Открываем браузер если флаг -o
+if $OPEN_BROWSER; then
+  info "Открываем браузер…"
+  if command -v open &>/dev/null; then
+    open "$BROWSER_URL"           # macOS
+  elif command -v xdg-open &>/dev/null; then
+    xdg-open "$BROWSER_URL"       # Linux
+  elif command -v start &>/dev/null; then
+    start "$BROWSER_URL"          # Windows (Git Bash)
+  else
+    warn "Не удалось открыть браузер автоматически."
+  fi
+fi
 
 # Держим скрипт живым до Ctrl+C
 wait "$SERVER_PID"

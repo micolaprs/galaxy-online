@@ -5,6 +5,7 @@ export interface MapPlanet {
   owner: 'mine' | 'enemy' | 'neutral';
   size: number;
   hasShips?: boolean;
+  color?: string;   // optional override — used by WatchView for per-player colors
 }
 
 export interface MapLine { x1: number; y1: number; x2: number; y2: number; color: string; }
@@ -49,6 +50,11 @@ export class GalaxyMap {
     this.lines      = lines;
     this.fitToView();
     this.draw();
+  }
+
+  /** Variant for WatchView: planets already carry their color via p.color */
+  setDataWithColors(galaxySize: number, planets: MapPlanet[]): void {
+    this.setData(galaxySize, planets);
   }
 
   select(name: string | null): void {
@@ -105,7 +111,7 @@ export class GalaxyMap {
         ctx.stroke();
       }
 
-      ctx.fillStyle = COLORS[p.owner];
+      ctx.fillStyle = p.color ?? COLORS[p.owner];
       ctx.beginPath();
       ctx.arc(sx, sy, r, 0, Math.PI * 2);
       ctx.fill();

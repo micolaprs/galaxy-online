@@ -1,4 +1,4 @@
-import type { CreateGameResponse, GameDetail, GameSummary, Session } from '../types/api.js';
+import type { CreateGameResponse, GameDetail, GameSummary, Session, SpectateData } from '../types/api.js';
 
 export class ApiClient {
   constructor(private readonly base: string = '') {}
@@ -11,6 +11,10 @@ export class ApiClient {
 
   async getGame(id: string): Promise<GameDetail> {
     return this.get(`/api/games/${id}`);
+  }
+
+  async spectate(id: string): Promise<SpectateData> {
+    return this.get(`/api/games/${id}/spectate`);
   }
 
   async createGame(body: {

@@ -45,6 +45,31 @@ export interface JoinedPlayer {
   password: string;
 }
 
+// Spectate (public, no auth)
+export interface SpectateData {
+  id: string;
+  name: string;
+  turn: number;
+  galaxySize: number;
+  lastTurnRunAt: string | null;
+  autoRunOnAllSubmitted: boolean;
+  players: SpectatePlayer[];
+  planets: SpectatePlanet[];
+  battles: SpectateBattle[];
+  bombings: SpectateBombing[];
+}
+export interface SpectatePlayer {
+  id: string; name: string; isBot: boolean;
+  submitted: boolean; isEliminated: boolean;
+  tech: TechLevels; planetCount: number;
+}
+export interface SpectatePlanet {
+  name: string; x: number; y: number;
+  size: number; ownerId: string | null; population: number;
+}
+export interface SpectateBattle  { planetName: string; winner: string; participants: string[]; }
+export interface SpectateBombing { planetName: string; attackerRace: string; previousOwner: string | null; }
+
 // Stored in localStorage
 export interface Session {
   gameId: string;

@@ -94,6 +94,37 @@ public sealed class GameController(GameService svc) : ControllerBase
         return forecast is null ? NotFound() : Content(forecast, "text/plain");
     }
 
+    // GET /api/games/{id}/spectate — public game state (no auth required)
+    [HttpGet("{id}/spectate")]
+    public async Task<IActionResult> GetSpectate(string id, CancellationToken ct)
+    {
+        var game = await svc.GetGameAsync(id, ct);
+        if (game is null) return NotFound();
+        return Ok(new
+        {
+            game.Id, game.Name, game.Turn, game.GalaxySize,
+            game.LastTurnRunAt, game.AutoRunOnAllSubmitted,
+            players = game.Players.Values.Select(p => new
+            {
+                p.Id, p.Name, p.IsBot, p.Submitted, p.IsEliminated,
+                p.Tech,
+                planetCount = game.PlanetsOwnedBy(p.Id).Count(),
+            }),
+            planets = game.Planets.Values.Select(p => new
+            {
+                p.Name, p.X, p.Y, p.Size, p.OwnerId, p.Population,
+            }),
+            battles  = game.Battles.Select(b => new
+            {
+                b.PlanetName, b.Winner, b.Participants,
+            }),
+            bombings = game.Bombings.Select(b => new
+            {
+                b.PlanetName, b.AttackerRace, b.PreviousOwner,
+            }),
+        });
+    }
+
     // POST /api/games/{id}/run-turn — manually trigger turn
     [HttpPost("{id}/run-turn")]
     public async Task<IActionResult> RunTurn(string id, CancellationToken ct)

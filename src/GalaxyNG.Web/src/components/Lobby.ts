@@ -5,6 +5,8 @@ import type { Session } from '../types/api.js';
 export class Lobby {
   private el: HTMLElement;
   onJoined?: (session: Session, gameId: string) => void;
+  onBack?:   () => void;
+  destroy(): void {}
 
   constructor(container: HTMLElement) {
     this.el = container;
@@ -14,6 +16,9 @@ export class Lobby {
   private render(): void {
     this.el.innerHTML = `
       <div class="lobby">
+        <div class="lobby-nav">
+          <button class="btn btn-sm btn-secondary" id="btn-lobby-back">← Games</button>
+        </div>
         <h1 class="logo">🌌 GalaxyNG</h1>
         <p class="tagline">Simultaneous-turn interstellar strategy</p>
 
@@ -54,6 +59,7 @@ export class Lobby {
       });
     });
 
+    this.el.querySelector('#btn-lobby-back')!.addEventListener('click', () => this.onBack?.());
     this.el.querySelector('#btn-create')!.addEventListener('click', () => this.createGame());
     this.el.querySelector('#btn-join')!.addEventListener('click', () => this.joinGame());
 

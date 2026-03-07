@@ -155,3 +155,102 @@ input:focus { outline: none; border-color: var(--accent); }
 ::-webkit-scrollbar { width: 6px; height: 6px; }
 ::-webkit-scrollbar-track { background: var(--bg); }
 ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+/* ---- Game List ---- */
+.gl-layout { display: flex; flex-direction: column; height: 100%; }
+.gl-header {
+  display: flex; align-items: center; gap: 12px;
+  padding: 14px 24px; background: var(--surface); border-bottom: 1px solid var(--border);
+}
+.logo-sm { font-size: 1.4rem; color: var(--accent); font-weight: bold; flex: 1; }
+.gl-body  { flex: 1; padding: 24px; overflow-y: auto; }
+.gl-title { font-size: 1rem; color: var(--muted); margin-bottom: 16px; letter-spacing: .05em; text-transform: uppercase; font-size: 11px; }
+.gl-loading { color: var(--muted); padding: 20px 0; }
+.gl-loading.error { color: var(--red); }
+.gl-loading.muted { color: var(--muted); }
+
+.gl-table { width: 100%; border-collapse: collapse; }
+.gl-table th {
+  text-align: left; padding: 8px 12px; font-size: 11px; color: var(--muted);
+  border-bottom: 1px solid var(--border); text-transform: uppercase; letter-spacing: .05em;
+}
+.gl-row { cursor: pointer; transition: background .1s; }
+.gl-row:hover { background: var(--surface); }
+.gl-cell { padding: 10px 12px; font-size: 12px; border-bottom: 1px solid var(--border); }
+.gl-name   { color: var(--text); font-weight: bold; }
+.gl-gid    { color: var(--accent); font-family: var(--font-mono); }
+.gl-turn   { color: var(--yellow); }
+.gl-players{ color: var(--muted); }
+.gl-ago    { color: var(--muted); font-size: 11px; }
+
+/* ---- Watch View ---- */
+.wv-layout { display: flex; flex-direction: column; height: 100%; }
+
+.wv-topbar {
+  display: flex; align-items: center; gap: 12px;
+  padding: 8px 16px; background: var(--surface); border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.wv-title   { font-weight: bold; color: var(--accent); font-size: 13px; }
+.wv-turn    { color: var(--yellow); font-size: 12px; }
+.wv-ago     { color: var(--muted); font-size: 11px; }
+.wv-topbar-spacer { flex: 1; }
+
+.wv-body {
+  flex: 1; display: grid;
+  grid-template-columns: 1fr 320px;
+  overflow: hidden;
+}
+
+.wv-map-col {
+  position: relative; overflow: hidden; background: #0a1628;
+}
+.wv-map-col canvas { display: block; width: 100%; height: 100%; }
+
+.wv-right-col {
+  display: flex; flex-direction: column;
+  background: var(--surface); border-left: 1px solid var(--border);
+  overflow: hidden;
+}
+
+.wv-section { display: flex; flex-direction: column; overflow: hidden; }
+.wv-section-title {
+  padding: 8px 14px; font-size: 10px; color: var(--muted);
+  text-transform: uppercase; letter-spacing: .08em;
+  border-bottom: 1px solid var(--border); background: var(--bg);
+  flex-shrink: 0;
+}
+.wv-log-section { flex: 1; min-height: 0; }
+
+/* Player cards */
+.wv-player {
+  display: flex; align-items: center; gap: 8px;
+  padding: 8px 14px; font-size: 12px;
+  border-bottom: 1px solid var(--border);
+}
+.wv-player.eliminated { opacity: .45; }
+.wv-player-dot {
+  width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0;
+}
+.wv-player-icon  { font-size: 13px; flex-shrink: 0; }
+.wv-player-name  { flex: 1; color: var(--text); font-weight: bold; }
+.wv-player-planets { color: var(--muted); font-size: 11px; white-space: nowrap; }
+.wv-player-status {
+  font-size: 10px; padding: 2px 6px; border-radius: 3px;
+  white-space: nowrap; flex-shrink: 0;
+}
+.wv-player-status.submitted  { background: #052e16; color: var(--green); }
+.wv-player-status.waiting    { background: #1c1107; color: var(--yellow); }
+.wv-player-status.eliminated { background: #1f0909; color: var(--red); }
+.wv-player-tech { color: var(--muted); font-size: 10px; white-space: nowrap; }
+
+/* Turn log */
+.wv-log { flex: 1; overflow-y: auto; padding: 8px 0; }
+.wv-log-empty { color: var(--muted); font-size: 11px; padding: 12px 14px; }
+.wv-log-entry { padding: 8px 14px; border-bottom: 1px solid var(--border); }
+.wv-log-turn  { font-size: 11px; color: var(--accent); font-weight: bold; margin-bottom: 4px; }
+.wv-log-time  { color: var(--muted); font-weight: normal; margin-left: 6px; }
+.wv-log-event { font-size: 11px; color: var(--text); padding: 2px 0; }
+
+/* Lobby back button */
+.lobby-nav { margin-bottom: 16px; }
