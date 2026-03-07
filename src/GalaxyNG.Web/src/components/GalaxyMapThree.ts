@@ -8,6 +8,7 @@ export interface ThreePlanet {
   color: string;
   ownerId: string | null;
   hasShips?: boolean;
+  population?: number;
 }
 
 const STAR_COUNT = 800;
@@ -26,6 +27,10 @@ export class GalaxyMapThree {
   // Selection ring
   private selectionRing: THREE.Mesh | null = null;
   private selectedName: string | null      = null;
+  private selectedPlanet: ThreePlanet | null = null;
+
+  // Planet info overlay (HTML element over the canvas)
+  private infoOverlay!: HTMLDivElement;
 
   // Pan / zoom
   private panX = 0;
@@ -38,6 +43,8 @@ export class GalaxyMapThree {
   private pointer   = new THREE.Vector2();
 
   private animFrame: number | null = null;
+  private clock = 0;          // animation time in seconds
+  private lastTime = 0;        // last rAF timestamp
 
   /** Called when user clicks a planet. */
   onPlanetClick?: (name: string, screenX: number, screenY: number) => void;
@@ -68,6 +75,15 @@ export class GalaxyMapThree {
     this.container.innerHTML = '';
   }
 
+  /** Update overlay position (call after pan/zoom) — used internally by the loop. */
+  private updateOverlayPosition(): void {
+    if (!this.selectedPlanet) return;
+    const p = this.selectedPlanet;
+    const pos = this.worldToScreen(p.x, -p.y);
+    this.infoOverlay.style.left = `${Math.round(pos.x + 18)}px`;
+    this.infoOverlay.style.top  = `${Math.round(pos.y - 60)}px`;
+  }
+
   resize(): void {
     const w = this.container.clientWidth  || 800;
     const h = this.container.clientHeight || 600;
@@ -96,7 +112,8 @@ export class GalaxyMapThree {
     this.setupLights();
     this.setupEvents();
     this.updateCamera();
-    this.render();
+    this.buildInfoOverlay();
+    this.startLoop();
   }
 
   private buildStarField(): void {
@@ -180,17 +197,25 @@ export class GalaxyMapThree {
       (this.selectionRing.material as THREE.Material).dispose();
       this.selectionRing = null;
     }
-    if (!this.selectedName) return;
 
-    const planet = this.planets.find(p => p.name === this.selectedName);
-    if (!planet) return;
+    const planet = this.selectedName
+      ? this.planets.find(p => p.name === this.selectedName) ?? null
+      : null;
+    this.selectedPlanet = planet;
 
-    const r  = this.planetRadius(planet.size) + 0.8;
+    if (!planet) {
+      this.infoOverlay?.classList.add('hidden');
+      return;
+    }
+
+    const r   = this.planetRadius(planet.size) + 0.8;
     const geo = new THREE.RingGeometry(r, r + 0.3, 32);
     const mat = new THREE.MeshBasicMaterial({ color: 0xfacc15, side: THREE.DoubleSide });
     this.selectionRing = new THREE.Mesh(geo, mat);
     this.selectionRing.position.set(planet.x, -planet.y, 0.2);
     this.scene.add(this.selectionRing);
+
+    this.showInfoOverlay(planet);
   }
 
   private planetRadius(size: number): number {
@@ -199,6 +224,43 @@ export class GalaxyMapThree {
 
   private hexColor(css: string): number {
     return parseInt(css.replace('#', ''), 16);
+  }
+
+  // ---- Planet info overlay ----
+
+  private buildInfoOverlay(): void {
+    this.infoOverlay = document.createElement('div');
+    this.infoOverlay.className = 'gm-planet-info hidden';
+    this.container.appendChild(this.infoOverlay);
+  }
+
+  private showInfoOverlay(p: ThreePlanet): void {
+    const pop     = Math.round(p.population ?? 0);
+    const devPct  = p.size > 0 ? Math.min(100, Math.round((pop / p.size) * 100)) : 0;
+    const barColor = devPct >= 70 ? '#4ade80' : devPct >= 35 ? '#facc15' : '#f87171';
+    const ownerBadge = p.ownerId
+      ? `<span class="gmi-dot" style="background:${p.color}"></span>`
+      : '';
+
+    this.infoOverlay.innerHTML = `
+      <div class="gmi-name">${ownerBadge}${esc(p.name)}</div>
+      <div class="gmi-row"><span class="gmi-lbl">Размер</span><span class="gmi-val">${p.size}</span></div>
+      <div class="gmi-row"><span class="gmi-lbl">Население</span><span class="gmi-val">${pop}</span></div>
+      <div class="gmi-bar-label">Развитие <span class="gmi-pct">${devPct}%</span></div>
+      <div class="gmi-bar-bg">
+        <div class="gmi-bar-fill" style="--target-w:${devPct}%;--bar-color:${barColor}"></div>
+      </div>
+    `;
+    this.infoOverlay.classList.remove('hidden');
+    this.updateOverlayPosition();
+  }
+
+  private worldToScreen(wx: number, wy: number): { x: number; y: number } {
+    const w = this.container.clientWidth  || 800;
+    const h = this.container.clientHeight || 600;
+    const vec = new THREE.Vector3(wx, wy, 0);
+    vec.project(this.camera);
+    return { x: (vec.x + 1) / 2 * w, y: (-vec.y + 1) / 2 * h };
   }
 
   // ---- Camera ----
@@ -313,9 +375,54 @@ export class GalaxyMapThree {
     }
   }
 
-  // ---- Render ----
+  // ---- Animation loop ----
+
+  private startLoop(): void {
+    const loop = (ts: number) => {
+      const dt = Math.min((ts - this.lastTime) / 1000, 0.1); // cap at 100ms
+      this.lastTime = ts;
+      this.clock += dt;
+      this.animate(dt);
+      this.renderer.render(this.scene, this.camera);
+      this.animFrame = requestAnimationFrame(loop);
+    };
+    this.animFrame = requestAnimationFrame(loop);
+  }
+
+  private animate(dt: number): void {
+    // Rotate each planet on its own axis (different speeds per planet)
+    const planetMeshesWithPlanet = this.planetMeshes.filter(m => m.userData['planet']);
+    for (let i = 0; i < planetMeshesWithPlanet.length; i++) {
+      const mesh = planetMeshesWithPlanet[i]!;
+      // Each planet gets a unique speed based on index
+      const speed = 0.1 + (i % 5) * 0.04;
+      mesh.rotation.y += speed * dt;
+      // Subtle axial tilt wobble
+      mesh.rotation.x = Math.sin(this.clock * 0.2 + i) * 0.08;
+    }
+
+    // Pulse the selection ring
+    if (this.selectionRing) {
+      const s = 1 + Math.sin(this.clock * 3) * 0.06;
+      this.selectionRing.scale.set(s, s, 1);
+      const mat = this.selectionRing.material as THREE.MeshBasicMaterial;
+      mat.opacity = 0.7 + Math.sin(this.clock * 3) * 0.3;
+      mat.transparent = true;
+    }
+
+    // Star field slow drift + twinkle
+    const starMat = this.starField.material as THREE.PointsMaterial;
+    starMat.opacity = 0.45 + Math.sin(this.clock * 0.7) * 0.1;
+
+    // Keep info overlay anchored to selected planet (pan/zoom can move it)
+    if (this.selectedPlanet) this.updateOverlayPosition();
+  }
 
   private render(): void {
     this.renderer.render(this.scene, this.camera);
   }
+}
+
+function esc(s: string): string {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;');
 }

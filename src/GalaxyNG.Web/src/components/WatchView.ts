@@ -203,13 +203,14 @@ export class WatchView {
 
   private updateMap(data: SpectateData): void {
     const planets: ThreePlanet[] = data.planets.map(p => ({
-      name:    p.name,
-      x:       p.x,
-      y:       p.y,
-      size:    p.size,
-      ownerId: p.ownerId,
-      hasShips: (p as any).hasShips ?? false,
-      color:   p.ownerId
+      name:       p.name,
+      x:          p.x,
+      y:          p.y,
+      size:       p.size,
+      ownerId:    p.ownerId,
+      hasShips:   (p as any).hasShips ?? false,
+      population: p.population,
+      color: p.ownerId
         ? (this.playerColorMap.get(p.ownerId) ?? '#888')
         : '#334466',
     }));

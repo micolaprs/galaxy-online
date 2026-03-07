@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # demo.sh — запуск тестовой игры
 # Использование:
-#   ./scripts/demo.sh                # 3 бота (убивает старые процессы, чистит игры)
+#   ./scripts/demo.sh                # 3 бота, возобновляет последнюю игру (или создаёт новую)
+#   ./scripts/demo.sh --new          # всегда создавать новую игру (удаляет старые)
 #   ./scripts/demo.sh -b -n 5        # только боты, 5 штук
 #   ./scripts/demo.sh -n 5           # 5 ботов
 #   ./scripts/demo.sh -s 400         # размер галактики
 #   ./scripts/demo.sh --no-kill      # не убивать уже запущенные процессы
-#   ./scripts/demo.sh --no-clean     # не удалять сохранённые игры
 
 set -euo pipefail
 
@@ -16,7 +16,8 @@ BOTS_ONLY=true
 OPEN_BROWSER=true
 NUM_BOTS=3
 DO_KILL=true    # по умолчанию: убиваем старые процессы
-DO_CLEAN=true   # по умолчанию: удаляем сохранённые игры
+DO_CLEAN=false  # по умолчанию: возобновляем последнюю игру
+FORCE_NEW=false # --new: удалить старые и создать новую
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -26,19 +27,22 @@ while [[ $# -gt 0 ]]; do
     -o|--open)      OPEN_BROWSER=true;  shift ;;
     --no-open)      OPEN_BROWSER=false; shift ;;
     --no-kill)      DO_KILL=false; shift ;;
-    --no-clean)     DO_CLEAN=false; shift ;;
+    --new)          FORCE_NEW=true; DO_CLEAN=true; shift ;;
     -h|--help)
       echo "Использование: $0 [опции]"
       echo ""
+      echo "  По умолчанию: возобновляет последнюю сохранённую игру."
+      echo "  Если игр нет — создаёт новую."
+      echo ""
+      echo "  --new                 Всегда создавать новую игру (удаляет старые)"
       echo "  -b, --bots-only       Все игроки — боты (без человека)"
       echo "  -n, --bots NUM        Количество ботов (по умолчанию: 3)"
       echo "  -s, --size SIZE       Размер галактики (по умолчанию: 200)"
       echo "  -o, --open            Открыть браузер после запуска (по умолчанию)"
       echo "  --no-open             Не открывать браузер"
       echo "  --no-kill             Не убивать уже запущенные сервер/боты"
-      echo "  --no-clean            Не удалять сохранённые игры"
       echo ""
-      echo "По умолчанию: убиваем старые процессы + удаляем все игры + открываем браузер."
+      echo "По умолчанию: убиваем старые процессы + возобновляем последнюю игру + открываем браузер."
       exit 0 ;;
     *) echo "Неизвестный флаг: $1" >&2; exit 1 ;;
   esac
@@ -201,29 +205,84 @@ else
   echo ""
 fi
 
-# ── Шаг 3: создание игры ─────────────────────────────────────────────────────
-info "Шаг 3/5 — Создание игры «${GAME_NAME}» (размер: ${GALAXY_SIZE})…"
+# ── Шаг 3: создание или возобновление игры ───────────────────────────────────
+GAME_ID=""
+RESUMED=false
 
-PLAYERS_JSON="["
-for i in "${!ALL_NAMES[@]}"; do
-  [[ $i -gt 0 ]] && PLAYERS_JSON+=","
-  if $BOTS_ONLY; then
-    IS_BOT="true"
+if ! $FORCE_NEW; then
+  info "Шаг 3/5 — Ищем последнюю сохранённую игру…"
+  EXISTING=$(curl -sf "$SERVER_URL/api/games" 2>/dev/null || echo "[]")
+  # Выбираем игру с наибольшим lastTurnRunAt (или просто первую)
+  GAME_ID=$(echo "$EXISTING" | python3 -c "
+import sys, json
+games = json.load(sys.stdin)
+if not games:
+    print('')
+    sys.exit(0)
+# Sort by lastTurnRunAt desc (None last)
+games.sort(key=lambda g: g.get('lastTurnRunAt') or '', reverse=True)
+print(games[0]['id'])
+" 2>/dev/null || echo "")
+
+  if [[ -n "$GAME_ID" ]]; then
+    # Получаем список игроков через spectate
+    SPECTATE=$(curl -sf "$SERVER_URL/api/games/$GAME_ID/spectate" 2>/dev/null || echo "{}")
+    TURN=$(echo "$SPECTATE" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('turn',0))" 2>/dev/null || echo "0")
+    # Собираем ботов из игры (имена)
+    BOT_NAMES_IN_GAME=$(echo "$SPECTATE" | python3 -c "
+import sys, json
+d = json.load(sys.stdin)
+bots = [p['name'] for p in d.get('players', []) if p.get('isBot')]
+print(' '.join(bots))
+" 2>/dev/null || echo "")
+
+    # Сопоставляем ботов из игры с пулом паролей
+    BOT_NAMES=(); BOT_PWS=()
+    for bot_name in $BOT_NAMES_IN_GAME; do
+      for i in "${!BOT_NAME_POOL[@]}"; do
+        if [[ "${BOT_NAME_POOL[$i]}" == "$bot_name" ]]; then
+          BOT_NAMES+=("$bot_name")
+          if $BOTS_ONLY; then
+            BOT_PWS+=("${BOT_PW_POOL[$i]}")
+          else
+            BOT_PWS+=("${BOT_PW_POOL[$((i+1))]}")
+          fi
+          break
+        fi
+      done
+    done
+
+    RESUMED=true
+    ok "Возобновляем игру $GAME_ID (ход $TURN, ботов: ${#BOT_NAMES[@]})"
   else
-    IS_BOT=$( [[ $i -eq 0 ]] && echo "false" || echo "true" )
+    warn "Сохранённых игр нет — создаём новую"
   fi
-  PLAYERS_JSON+=$(printf ' { "name": "%s", "password": "%s", "isBot": %s }' \
-    "${ALL_NAMES[$i]}" "${ALL_PWS[$i]}" "$IS_BOT")
-done
-PLAYERS_JSON+=" ]"
+fi
 
-RESPONSE=$(curl -sf -X POST "$SERVER_URL/api/games" \
-  -H "Content-Type: application/json" \
-  -d "$(printf '{"name":"%s","players":%s,"galaxySize":%d,"autoRun":true}' \
-    "$GAME_NAME" "$PLAYERS_JSON" "$GALAXY_SIZE")")
+if [[ -z "$GAME_ID" ]]; then
+  info "Шаг 3/5 — Создание игры «${GAME_NAME}» (размер: ${GALAXY_SIZE})…"
 
-GAME_ID=$(echo "$RESPONSE" | python3 -c "import sys,json; print(json.load(sys.stdin)['gameId'])")
-ok "Игра создана: $GAME_ID"
+  PLAYERS_JSON="["
+  for i in "${!ALL_NAMES[@]}"; do
+    [[ $i -gt 0 ]] && PLAYERS_JSON+=","
+    if $BOTS_ONLY; then
+      IS_BOT="true"
+    else
+      IS_BOT=$( [[ $i -eq 0 ]] && echo "false" || echo "true" )
+    fi
+    PLAYERS_JSON+=$(printf ' { "name": "%s", "password": "%s", "isBot": %s }' \
+      "${ALL_NAMES[$i]}" "${ALL_PWS[$i]}" "$IS_BOT")
+  done
+  PLAYERS_JSON+=" ]"
+
+  RESPONSE=$(curl -sf -X POST "$SERVER_URL/api/games" \
+    -H "Content-Type: application/json" \
+    -d "$(printf '{"name":"%s","players":%s,"galaxySize":%d,"autoRun":true}' \
+      "$GAME_NAME" "$PLAYERS_JSON" "$GALAXY_SIZE")")
+
+  GAME_ID=$(echo "$RESPONSE" | python3 -c "import sys,json; print(json.load(sys.stdin)['gameId'])")
+  ok "Игра создана: $GAME_ID"
+fi
 
 # ── Шаг 4: сборка и запуск ботов ─────────────────────────────────────────────
 info "Шаг 4/5 — Сборка ботов…"
@@ -239,7 +298,7 @@ for i in "${!BOT_NAMES[@]}"; do
   Bot__RaceName="$BOT_NAME" \
   Bot__Password="$BOT_PW" \
   Bot__ServerUrl="$SERVER_URL" \
-    dotnet run -c Release --no-build --no-launch-profile > "$LOG_FILE" 2>&1 &
+    dotnet run -c Release --no-build --no-launch-profile >> "$LOG_FILE" 2>&1 &
   BOT_PIDS+=($!)
   ok "Бот $BOT_NAME запущен (PID ${BOT_PIDS[$i]}, лог: $LOG_FILE)"
 done
@@ -255,7 +314,8 @@ echo ""
 echo -e "${GREEN}═══════════════════════════════════════════════════════${NC}"
 ok "Игра готова!"
 echo ""
-$BOTS_ONLY && ok "Режим: только боты (autoRun=true, ходы идут автоматически)"
+$RESUMED && ok "Режим: возобновление игры $GAME_ID" || ok "Режим: новая игра $GAME_ID"
+$BOTS_ONLY && ok "autoRun=true, ходы идут автоматически"
 echo ""
 echo "  Открыть в браузере:"
 echo -e "  ${CYAN}$BROWSER_URL${NC}"

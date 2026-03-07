@@ -17,8 +17,7 @@ public sealed class Game
     // Turn history (archived per-turn orders + events)
     public List<TurnHistoryEntry> TurnHistory { get; set; } = [];
 
-    // Transient: LLM reasoning for the current in-progress turn (cleared when turn runs)
-    [System.Text.Json.Serialization.JsonIgnore]
+    // LLM reasoning for the current in-progress turn (cleared when turn runs, persisted for resume)
     public Dictionary<string, string> CurrentTurnReasoning { get; set; } = [];
 
     // AI-generated summaries, one per turn

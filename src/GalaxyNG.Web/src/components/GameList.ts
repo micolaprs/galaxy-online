@@ -81,7 +81,7 @@ export class GameList {
           <td class="gl-cell gl-players">${g.playerCount} players</td>
           <td class="gl-cell gl-ago">${ago}</td>
           <td class="gl-cell gl-action">
-            <button class="btn btn-sm btn-watch" data-id="${g.id}">Watch →</button>
+            <button class="btn btn-sm btn-watch" data-id="${g.id}">Возобновить →</button>
           </td>
         </tr>
       `;
