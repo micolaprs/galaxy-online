@@ -14,28 +14,44 @@ public sealed class BotAgent(
     IHttpClientFactory       httpFactory,
     ILogger<BotAgent>        logger)
 {
-    public async Task RunTurnAsync(CancellationToken ct = default)
+    public async Task RunTurnAsync(int turn, CancellationToken ct = default)
     {
-        logger.LogInformation("Bot {Race} starting turn cycle for game {Game}", config.RaceName, config.GameId);
+        logger.LogInformation("━━━ [{Race}] Начинаю ход {Turn} ━━━", config.RaceName, turn);
 
         // 1. Get turn report
-        await PostBotStatusAsync("reading-report", null, ct);
-        logger.LogInformation("📋 Fetching turn report from server…");
+        await PostBotStatusAsync("reading-report", $"ход {turn}", ct);
+        logger.LogInformation("📋 [{Race}] Читаю отчёт за ход {Turn}…", config.RaceName, turn);
         string report = await GetReportAsync(ct);
         if (string.IsNullOrWhiteSpace(report))
         {
-            logger.LogWarning("Could not retrieve turn report.");
-            await PostBotStatusAsync("idle", "no report", ct);
+            logger.LogWarning("❌ [{Race}] Не удалось получить отчёт за ход {Turn}", config.RaceName, turn);
+            await PostBotStatusAsync("idle", "нет отчёта", ct);
             return;
         }
-        logger.LogInformation("📋 Got turn report ({Lines} lines)", report.Split('\n').Length);
+        int reportLines = report.Split('\n').Length;
+        logger.LogInformation("📋 [{Race}] Отчёт получен ({Lines} строк)", config.RaceName, reportLines);
 
         // 2. Ask LLM for orders (with retry on validation failure)
         string orders = "";
         for (int attempt = 1; attempt <= 3; attempt++)
         {
-            await PostBotStatusAsync("thinking", $"LLM call attempt {attempt}", ct);
-            logger.LogInformation("Bot {Race} calling LLM (attempt {Attempt})", config.RaceName, attempt);
+            await PostBotStatusAsync("thinking", $"ход {turn}, попытка {attempt}/3", ct);
+            logger.LogInformation("🧠 [{Race}] Думаю над ходом {Turn} (попытка {Attempt}/3)…", config.RaceName, turn, attempt);
+
+            // Heartbeat: log every 20s while waiting for LLM
+            using var thinkingCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            var heartbeat = Task.Run(async () =>
+            {
+                try
+                {
+                    while (!thinkingCts.Token.IsCancellationRequested)
+                    {
+                        await Task.Delay(20_000, thinkingCts.Token);
+                        logger.LogInformation("⏳ [{Race}] Всё ещё жду ответа от LLM (ход {Turn})…", config.RaceName, turn);
+                    }
+                }
+                catch (OperationCanceledException) { }
+            });
 
             var messages = new List<ChatMessage>
             {
@@ -50,37 +66,42 @@ public sealed class BotAgent(
             }
 
             string raw = await llm.CompleteAsync(messages, ct);
+            await thinkingCts.CancelAsync();
+            await heartbeat;
+
             orders = ExtractOrders(raw);
             int orderLines = orders.Split('\n', StringSplitOptions.RemoveEmptyEntries).Length;
-            logger.LogInformation("📝 Extracted {Lines} order lines", orderLines);
+            logger.LogInformation("📝 [{Race}] LLM составил {Lines} приказов", config.RaceName, orderLines);
 
             // 3. Validate
-            await PostBotStatusAsync("validating", $"attempt {attempt}", ct);
-            logger.LogInformation("🔍 Validating orders with server…");
+            await PostBotStatusAsync("validating", $"ход {turn}, попытка {attempt}", ct);
+            logger.LogInformation("🔍 [{Race}] Проверяю приказы у сервера…", config.RaceName);
             var validation = await ValidateOrdersAsync(orders, ct);
             if (validation.StartsWith("OK", StringComparison.OrdinalIgnoreCase))
             {
-                logger.LogInformation("✅ Orders validated on attempt {Attempt}", attempt);
+                logger.LogInformation("✅ [{Race}] Приказы прошли проверку (попытка {Attempt})", config.RaceName, attempt);
                 break;
             }
 
-            logger.LogWarning("⚠️ Validation failed (attempt {Attempt}): {Error}", attempt, validation);
-            if (attempt == 3) logger.LogError("❌ Giving up after 3 attempts — submitting best effort.");
+            logger.LogWarning("⚠️ [{Race}] Ошибка проверки (попытка {Attempt}): {Error}", config.RaceName, attempt, validation);
+            if (attempt == 3)
+                logger.LogError("❌ [{Race}] Отправляю лучший вариант после 3 попыток", config.RaceName);
         }
 
         // 4. Submit
-        await PostBotStatusAsync("submitting", null, ct);
+        await PostBotStatusAsync("submitting", $"ход {turn}", ct);
+        logger.LogInformation("📤 [{Race}] Отправляю приказы для хода {Turn}…", config.RaceName, turn);
         await SubmitOrdersAsync(orders, final: true, ct);
-        logger.LogInformation("Bot {Race} submitted orders for game {Game}", config.RaceName, config.GameId);
-        await PostBotStatusAsync("submitted", null, ct);
+        logger.LogInformation("✅ [{Race}] Приказы для хода {Turn} отправлены!", config.RaceName, turn);
+        await PostBotStatusAsync("submitted", $"ход {turn}", ct);
     }
 
     /// <summary>Loop: poll server for new turns and play automatically.</summary>
     public async Task RunLoopAsync(CancellationToken ct = default)
     {
         int lastTurn = -1;
-        logger.LogInformation("Bot {Race} entering game loop", config.RaceName);
-        await PostBotStatusAsync("idle", "waiting for first turn", ct);
+        logger.LogInformation("🚀 [{Race}] Бот подключился к игре {Game}", config.RaceName, config.GameId);
+        await PostBotStatusAsync("idle", "ожидание первого хода", ct);
 
         while (!ct.IsCancellationRequested)
         {
@@ -89,19 +110,21 @@ public sealed class BotAgent(
                 int turn = await GetCurrentTurnAsync(ct);
                 if (turn != lastTurn)
                 {
+                    logger.LogInformation("🔔 [{Race}] Новый ход: {Turn}", config.RaceName, turn);
                     lastTurn = turn;
-                    await RunTurnAsync(ct);
+                    await RunTurnAsync(turn, ct);
                 }
                 else
                 {
-                    await PostBotStatusAsync("waiting", $"turn {turn}", ct);
+                    await PostBotStatusAsync("waiting", $"ожидаю хода {turn + 1}", ct);
+                    logger.LogDebug("[{Race}] Жду следующего хода (сейчас ход {Turn})", config.RaceName, turn);
                 }
                 await Task.Delay(TimeSpan.FromSeconds(5), ct);
             }
             catch (OperationCanceledException) { break; }
             catch (Exception ex)
             {
-                logger.LogError(ex, "Bot loop error — retrying in 60s");
+                logger.LogError(ex, "❌ [{Race}] Ошибка в игровом цикле — повтор через 60с", config.RaceName);
                 await PostBotStatusAsync("error", ex.Message, ct);
                 await Task.Delay(TimeSpan.FromSeconds(60), ct);
             }

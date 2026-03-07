@@ -54,4 +54,34 @@ app.MapControllers();
 app.MapHub<GameHub>("/hubs/game");
 app.MapMcp("/mcp");     // MCP endpoint for bots
 
+// On startup: resume auto-run for any game where all players already submitted
+// (handles server restart mid-game)
+app.Lifetime.ApplicationStarted.Register(() =>
+{
+    _ = Task.Run(async () =>
+    {
+        try
+        {
+            await Task.Delay(500); // brief pause to let SignalR hub initialize
+            var gameService = app.Services.GetRequiredService<GameService>();
+            var sysLog      = app.Services.GetRequiredService<ILogger<GameService>>();
+            var games       = await gameService.ListGamesAsync();
+            foreach (var game in games)
+            {
+                if (game.AutoRunOnAllSubmitted && game.AllPlayersSubmitted())
+                {
+                    sysLog.LogInformation(
+                        "🔄 Возобновляем авто-ход для игры {Id} (все игроки уже сдали приказы)", game.Id);
+                    await gameService.RunTurnAsync(game.Id);
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            var sysLog = app.Services.GetRequiredService<ILogger<GameService>>();
+            sysLog.LogWarning(ex, "Ошибка при проверке авто-хода при старте");
+        }
+    });
+});
+
 app.Run();
