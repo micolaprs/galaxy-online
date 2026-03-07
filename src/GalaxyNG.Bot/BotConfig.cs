@@ -1,0 +1,20 @@
+namespace GalaxyNG.Bot;
+
+public sealed record BotConfig
+{
+    public required string GameId    { get; init; }
+    public required string RaceName  { get; init; }
+    public required string Password  { get; init; }
+    public required string ServerUrl { get; init; }   // e.g. http://localhost:5000
+
+    public LlmConfig Llm { get; init; } = new();
+}
+
+public sealed record LlmConfig
+{
+    public string BaseUrl    { get; init; } = "http://localhost:1234/v1";
+    public string Model      { get; init; } = "qwen/qwen3-14b";
+    public double Temperature{ get; init; } = 0.7;
+    public int    MaxTokens  { get; init; } = 4096;
+    public string ApiKey     { get; init; } = "lm-studio"; // LM Studio ignores this
+}

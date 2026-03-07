@@ -1,0 +1,39 @@
+# .NET build outputs
+bin/
+obj/
+*.user
+*.suo
+.vs/
+
+# NuGet
+*.nupkg
+.nuget/
+packages/
+
+# Rider / VS Code
+.idea/
+.vscode/
+*.DotSettings
+
+# Node
+node_modules/
+dist/
+
+# Vite build output (goes to wwwroot — keep only the dir, not content)
+src/GalaxyNG.Server/wwwroot/assets/
+src/GalaxyNG.Server/wwwroot/index.html
+
+# Game data (runtime generated)
+.galaxyng/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Secrets
+appsettings.*.json
+!appsettings.json
+
+# Test results
+TestResults/
+coverage/

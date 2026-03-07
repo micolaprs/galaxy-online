@@ -1,0 +1,157 @@
+/* ---- Reset & Base ---- */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg:       #0f172a;
+  --surface:  #1e293b;
+  --border:   #334155;
+  --text:     #e2e8f0;
+  --muted:    #94a3b8;
+  --accent:   #38bdf8;
+  --green:    #4ade80;
+  --red:      #f87171;
+  --yellow:   #facc15;
+  --font-mono: 'JetBrains Mono', 'Fira Code', 'Courier New', monospace;
+}
+
+html, body { height: 100%; background: var(--bg); color: var(--text); font-family: var(--font-mono); font-size: 13px; }
+#app { height: 100vh; display: flex; flex-direction: column; }
+
+/* ---- Buttons ---- */
+.btn {
+  padding: 6px 14px; border: 1px solid var(--border); border-radius: 4px;
+  background: var(--surface); color: var(--text); cursor: pointer; font-family: inherit; font-size: 12px;
+  transition: background 0.15s;
+}
+.btn:hover { background: var(--border); }
+.btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.btn-primary  { background: var(--accent); border-color: var(--accent); color: #0f172a; font-weight: bold; }
+.btn-primary:hover { filter: brightness(1.1); }
+.btn-secondary{ background: transparent; }
+.btn-warning  { background: var(--yellow); border-color: var(--yellow); color: #0f172a; }
+.btn-sm       { padding: 3px 8px; font-size: 11px; }
+
+/* ---- Lobby ---- */
+.lobby {
+  max-width: 480px; margin: 60px auto; padding: 32px;
+  background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
+}
+.logo      { font-size: 2rem; color: var(--accent); margin-bottom: 4px; }
+.tagline   { color: var(--muted); margin-bottom: 24px; }
+
+.lobby-tabs  { display: flex; gap: 4px; margin-bottom: 20px; }
+.tab         { flex: 1; padding: 8px; border: 1px solid var(--border); background: transparent; color: var(--muted); cursor: pointer; border-radius: 4px; font-family: inherit; }
+.tab.active  { background: var(--border); color: var(--text); }
+
+.tab-content { display: flex; flex-direction: column; gap: 12px; }
+.tab-content.hidden { display: none; }
+
+label { display: flex; flex-direction: column; gap: 4px; font-size: 11px; color: var(--muted); }
+input[type="text"], input[type="number"] {
+  padding: 7px 10px; background: var(--bg); border: 1px solid var(--border);
+  border-radius: 4px; color: var(--text); font-family: inherit; font-size: 13px;
+}
+input:focus { outline: none; border-color: var(--accent); }
+
+.bot-row  { display: flex; align-items: center; gap: 8px; }
+.result-box { background: var(--bg); border: 1px solid var(--green); border-radius: 4px; padding: 12px; font-size: 12px; }
+.result-box.hidden { display: none; }
+.join-link { display: flex; gap: 6px; margin: 8px 0; }
+.join-link input { flex: 1; color: var(--accent); }
+.error { color: var(--red); font-size: 12px; }
+.error.hidden { display: none; }
+
+/* ---- Game Layout ---- */
+.game-layout {
+  flex: 1; display: grid;
+  grid-template-columns: 340px 1fr;
+  overflow: hidden;
+}
+
+.sidebar {
+  display: flex; flex-direction: column;
+  background: var(--surface); border-right: 1px solid var(--border);
+  overflow: hidden;
+}
+.sidebar-header {
+  padding: 8px 12px; display: flex; justify-content: space-between; align-items: center;
+  border-bottom: 1px solid var(--border); font-size: 11px; color: var(--muted);
+}
+.game-id   { font-weight: bold; color: var(--accent); }
+.turn-label{ color: var(--yellow); }
+
+#galaxy-canvas { width: 320px; height: 320px; cursor: crosshair; flex-shrink: 0; }
+
+.planet-info {
+  flex: 1; padding: 10px 12px; font-size: 12px; color: var(--muted);
+  border-top: 1px solid var(--border); overflow-y: auto;
+}
+.planet-info strong { color: var(--text); }
+
+/* ---- Main Panel ---- */
+.main-panel { display: flex; flex-direction: column; overflow: hidden; }
+
+.panel-tabs { display: flex; border-bottom: 1px solid var(--border); }
+.ptab {
+  padding: 8px 18px; border: none; border-bottom: 2px solid transparent;
+  background: transparent; color: var(--muted); cursor: pointer; font-family: inherit; font-size: 12px;
+}
+.ptab.active { color: var(--accent); border-bottom-color: var(--accent); }
+
+.panel-content { flex: 1; overflow: hidden; display: flex; flex-direction: column; }
+.panel-content.hidden { display: none; }
+
+/* ---- Orders Editor ---- */
+.orders-editor { display: flex; flex-direction: column; height: 100%; }
+.orders-toolbar {
+  padding: 6px 10px; display: flex; gap: 6px; align-items: center;
+  border-bottom: 1px solid var(--border); background: var(--surface);
+}
+#orders-text {
+  flex: 1; resize: none; padding: 12px; background: var(--bg);
+  border: none; color: var(--text); font-family: var(--font-mono); font-size: 13px;
+  line-height: 1.6; outline: none;
+}
+.orders-status {
+  padding: 4px 10px; font-size: 11px; border-top: 1px solid var(--border);
+  min-height: 22px;
+}
+.orders-status.ok    { color: var(--green); }
+.orders-status.error { color: var(--red); }
+.orders-status.info  { color: var(--muted); }
+
+/* ---- Turn Report ---- */
+.report-text {
+  flex: 1; padding: 12px; overflow: auto; font-size: 12px;
+  line-height: 1.5; white-space: pre; color: var(--text);
+  background: var(--bg);
+}
+
+/* ---- Status Bar ---- */
+.status-bar {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 4px 12px; background: var(--surface); border-top: 1px solid var(--border);
+  font-size: 11px; color: var(--muted); height: 30px;
+}
+
+/* ---- Modal ---- */
+#modal-overlay {
+  position: fixed; inset: 0; background: rgba(0,0,0,.7); display: flex;
+  align-items: center; justify-content: center; z-index: 1000;
+}
+.modal {
+  background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
+  width: min(900px, 90vw); max-height: 80vh; display: flex; flex-direction: column;
+}
+.modal-header {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 12px 16px; border-bottom: 1px solid var(--border); font-weight: bold;
+}
+.btn-close { background: none; border: none; color: var(--muted); cursor: pointer; font-size: 16px; }
+.modal-body { padding: 16px; overflow: auto; flex: 1; }
+.modal-body pre { font-size: 11px; line-height: 1.5; white-space: pre-wrap; }
+
+/* ---- Scrollbars ---- */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: var(--bg); }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }

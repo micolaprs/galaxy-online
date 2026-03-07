@@ -1,0 +1,10 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/GalaxyNG.Bot/GalaxyNG.Bot.csproj" />
+    <Project Path="src/GalaxyNG.Engine/GalaxyNG.Engine.csproj" />
+    <Project Path="src/GalaxyNG.Server/GalaxyNG.Server.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/GalaxyNG.Engine.Tests/GalaxyNG.Engine.Tests.csproj" />
+  </Folder>
+</Solution>
