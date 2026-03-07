@@ -24,7 +24,7 @@ file sealed class SignalRLogger(string category, LogBroadcastService broadcaster
 
     public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
 
-    public bool IsEnabled(LogLevel logLevel) => logLevel >= LogLevel.Debug;
+    public bool IsEnabled(LogLevel logLevel) => logLevel >= LogLevel.Information;
 
     public void Log<TState>(
         LogLevel logLevel, EventId eventId, TState state,

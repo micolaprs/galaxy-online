@@ -100,14 +100,16 @@ export class QuakeConsole {
 
   private pushHtml(html: string): void {
     this.lines.push(html);
-    if (this.lines.length > MAX_LINES) {
-      this.lines.shift();
-      this.outputEl.removeChild(this.outputEl.firstChild!);
-    }
-    this.outputEl.insertAdjacentHTML('beforeend', html);
+    if (this.lines.length > MAX_LINES) this.lines.shift();
 
-    // Auto-scroll to bottom
-    this.outputEl.scrollTop = this.outputEl.scrollHeight;
+    // Only touch DOM when visible — avoids layout thrash while closed
+    if (this.open) {
+      this.outputEl.insertAdjacentHTML('beforeend', html);
+      // Trim DOM to match lines array
+      while (this.outputEl.childElementCount > MAX_LINES)
+        this.outputEl.removeChild(this.outputEl.firstChild!);
+      this.outputEl.scrollTop = this.outputEl.scrollHeight;
+    }
   }
 
   toggle(): void {
@@ -118,12 +120,17 @@ export class QuakeConsole {
     this.open = true;
     this.overlay.classList.remove('qc-closed');
     this.overlay.classList.add('qc-open');
+    // Batch-render everything accumulated while closed
+    this.outputEl.innerHTML = this.lines.join('');
+    this.outputEl.scrollTop = this.outputEl.scrollHeight;
   }
 
   close(): void {
     this.open = false;
     this.overlay.classList.remove('qc-open');
     this.overlay.classList.add('qc-closed');
+    // Clear DOM — will be rebuilt cheaply on next open()
+    this.outputEl.innerHTML = '';
   }
 }
 
