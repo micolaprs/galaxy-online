@@ -109,18 +109,22 @@ if $DO_KILL; then
   # Убиваем боты (любые dotnet-процессы с GalaxyNG.Bot)
   BOT_PIDS_OLD=$(pgrep -f "GalaxyNG.Bot" 2>/dev/null || true)
   if [[ -n "$BOT_PIDS_OLD" ]]; then
-    echo "$BOT_PIDS_OLD" | xargs kill 2>/dev/null || true
+    echo "$BOT_PIDS_OLD" | xargs kill -9 2>/dev/null || true
     ok "Старые боты остановлены (PID: $(echo "$BOT_PIDS_OLD" | tr '\n' ' '))"
   else
     warn "Активных ботов не найдено"
   fi
 
-  # Убиваем сервер на порту 5055
+  # Убиваем сервер на порту 5055 — сначала SIGTERM, потом SIGKILL
   SERVER_PID_OLD=$(lsof -ti :5055 2>/dev/null || true)
   if [[ -n "$SERVER_PID_OLD" ]]; then
-    echo "$SERVER_PID_OLD" | xargs kill 2>/dev/null || true
-    # Ждём освобождения порта (до 10 сек)
-    for i in $(seq 1 10); do
+    echo "$SERVER_PID_OLD" | xargs kill    2>/dev/null || true
+    sleep 1
+    # Если ещё жив — добиваем SIGKILL
+    SERVER_PID_ALIVE=$(lsof -ti :5055 2>/dev/null || true)
+    [[ -n "$SERVER_PID_ALIVE" ]] && echo "$SERVER_PID_ALIVE" | xargs kill -9 2>/dev/null || true
+    # Ждём освобождения порта (до 5 сек)
+    for i in $(seq 1 5); do
       lsof -ti :5055 > /dev/null 2>&1 || break
       sleep 1
     done

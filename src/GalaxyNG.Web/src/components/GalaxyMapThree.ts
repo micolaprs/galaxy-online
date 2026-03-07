@@ -220,9 +220,10 @@ export class GalaxyMapThree {
       this.zoom = worldH / h;
     }
 
-    // Center (galaxy goes from 0 to galaxySize)
-    this.panX = -(gs / 2);
-    this.panY = gs / 2;
+    // Center: planets are placed at (x, -y) in world space,
+    // so galaxy spans X: 0→gs, Y: -gs→0 → center is (gs/2, -gs/2)
+    this.panX = gs / 2;
+    this.panY = -(gs / 2);
 
     this.updateCamera();
   }
