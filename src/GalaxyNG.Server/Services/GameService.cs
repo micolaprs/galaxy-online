@@ -11,6 +11,7 @@ public sealed class GameService(
     GalaxyGenerator      generator,
     TurnProcessor        processor,
     ReportGenerator      reporter,
+    LlmService           llm,
     IHubContext<GameHub> hub,
     ILogger<GameService> logger)
 {
@@ -145,8 +146,28 @@ public sealed class GameService(
             var game = _cache.GetValueOrDefault(gameId) ?? await store.LoadAsync(gameId, ct);
             if (game is null) return (false, "Game not found.");
 
+            // Capture orders BEFORE the turn processor clears them
+            var histEntry = new TurnHistoryEntry
+            {
+                Turn = game.Turn,
+                RunAt = DateTime.UtcNow,
+                PlayerOrders = game.Players.Values
+                    .Where(p => !string.IsNullOrEmpty(p.PendingOrders))
+                    .ToDictionary(p => p.Name, p => p.PendingOrders!),
+            };
+
             processor.RunTurn(game);
             game.LastTurnRunAt = DateTime.UtcNow;
+
+            // Capture results AFTER the turn
+            histEntry.Battles  = game.Battles
+                .Select(b => $"Битва при {b.PlanetName}: {string.Join(" vs ", b.Participants)} → {b.Winner} побеждает")
+                .ToList();
+            histEntry.Bombings = game.Bombings
+                .Select(b => $"{b.AttackerRace} бомбардировал {b.PlanetName}" +
+                             (b.PreviousOwner != null ? $" (был {b.PreviousOwner})" : ""))
+                .ToList();
+            game.TurnHistory.Add(histEntry);
 
             await store.SaveAsync(game, ct);
             logger.LogInformation("Ran turn {Turn} for game {Id}", game.Turn, game.Id);
@@ -208,6 +229,38 @@ public sealed class GameService(
             detail,
             time = DateTimeOffset.UtcNow.ToString("HH:mm:ss"),
         }, ct);
+    }
+
+    // ---- AI summaries ----
+
+    public async Task<string?> GenerateGalaxySummaryAsync(string gameId, CancellationToken ct = default)
+    {
+        var game = await GetGameAsync(gameId, ct);
+        if (game is null) return null;
+
+        var summary = await llm.GenerateGalaxySummaryAsync(game, ct);
+        if (summary is null) return null;
+
+        // Remove existing summary for this turn, then add new one
+        game.AiSummaries.RemoveAll(s => s.Turn == game.Turn);
+        game.AiSummaries.Add(new AiSummaryEntry { Turn = game.Turn, Summary = summary });
+        await SaveGameAsync(game, ct);
+        return summary;
+    }
+
+    public async Task<string?> GenerateTurnSummaryAsync(
+        string gameId, string raceName, int turn, CancellationToken ct = default)
+    {
+        var game = await GetGameAsync(gameId, ct);
+        if (game is null) return null;
+        return await llm.GenerateTurnSummaryAsync(game, raceName, turn, ct);
+    }
+
+    public async Task<List<AiSummaryEntry>> GetAiSummariesAsync(
+        string gameId, CancellationToken ct = default)
+    {
+        var game = await GetGameAsync(gameId, ct);
+        return game?.AiSummaries ?? [];
     }
 
     // ---- helpers ----

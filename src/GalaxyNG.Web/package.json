@@ -12,6 +12,8 @@
     "vite": "^6.2.2"
   },
   "dependencies": {
-    "@microsoft/signalr": "^10.0.0"
+    "@microsoft/signalr": "^10.0.0",
+    "@types/three": "^0.183.1",
+    "three": "^0.183.2"
   }
 }

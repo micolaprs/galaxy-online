@@ -121,6 +121,8 @@ public sealed class GameController(GameService svc) : ControllerBase
             planets = game.Planets.Values.Select(p => new
             {
                 p.Name, p.X, p.Y, p.Size, p.OwnerId, p.Population,
+                hasShips = game.Players.Values
+                    .Any(pl => pl.Groups.Any(g => g.At == p.Name && !g.InHyperspace)),
             }),
             battles  = game.Battles.Select(b => new
             {
@@ -131,6 +133,113 @@ public sealed class GameController(GameService svc) : ControllerBase
                 b.PlanetName, b.AttackerRace, b.PreviousOwner,
             }),
         });
+    }
+
+    // GET /api/games/{id}/spectate/planet/{name} — detailed public planet info
+    [HttpGet("{id}/spectate/planet/{name}")]
+    public async Task<IActionResult> GetPlanetDetail(string id, string name, CancellationToken ct)
+    {
+        var game = await svc.GetGameAsync(id, ct);
+        if (game is null) return NotFound();
+        var planet = game.GetPlanet(name);
+        if (planet is null) return NotFound();
+
+        var owner = planet.OwnerId is not null
+            ? game.Players.GetValueOrDefault(planet.OwnerId)
+            : null;
+
+        var groups = game.Players.Values
+            .SelectMany(p => p.Groups
+                .Where(g => g.At == planet.Name && !g.InHyperspace)
+                .Select(g => new { g.Ships, g.ShipTypeName, ownerName = p.Name, ownerId = p.Id }))
+            .ToList();
+
+        return Ok(new
+        {
+            planet.Name, planet.X, planet.Y, planet.Size, planet.Resources,
+            planet.Population, planet.Industry, planet.OwnerId,
+            ownerName    = owner?.Name,
+            planet.IsHome,
+            production   = planet.Production,
+            producing    = planet.Producing.ToString(),
+            planet.ShipTypeName,
+            stockpiles   = new
+            {
+                capital   = planet.Stockpiles.Capital,
+                materials = planet.Stockpiles.Materials,
+                colonists = planet.Stockpiles.Colonists,
+            },
+            groups,
+        });
+    }
+
+    // GET /api/games/{id}/history — turn history list
+    [HttpGet("{id}/history")]
+    public async Task<IActionResult> GetHistory(string id, CancellationToken ct)
+    {
+        var game = await svc.GetGameAsync(id, ct);
+        if (game is null) return NotFound();
+        return Ok(game.TurnHistory
+            .OrderByDescending(h => h.Turn)
+            .Select(h => new
+            {
+                h.Turn,
+                h.RunAt,
+                players      = h.PlayerOrders.Keys.ToList(),
+                battleCount  = h.Battles.Count,
+                bombingCount = h.Bombings.Count,
+                battles      = h.Battles,
+                bombings     = h.Bombings,
+            }));
+    }
+
+    // GET /api/games/{id}/history/{turn}/player/{race} — player orders for a specific turn
+    [HttpGet("{id}/history/{turn}/player/{race}")]
+    public async Task<IActionResult> GetTurnPlayerOrders(
+        string id, int turn, string race, CancellationToken ct)
+    {
+        var game = await svc.GetGameAsync(id, ct);
+        if (game is null) return NotFound();
+        var hist = game.TurnHistory.FirstOrDefault(h => h.Turn == turn);
+        if (hist is null) return NotFound();
+
+        hist.PlayerOrders.TryGetValue(race, out var orders);
+        return Ok(new
+        {
+            turn, race,
+            orders   = orders ?? "",
+            battles  = hist.Battles,
+            bombings = hist.Bombings,
+        });
+    }
+
+    // POST /api/games/{id}/history/{turn}/player/{race}/summary — LLM turn summary
+    [HttpPost("{id}/history/{turn}/player/{race}/summary")]
+    public async Task<IActionResult> GetTurnSummary(
+        string id, int turn, string race, CancellationToken ct)
+    {
+        var summary = await svc.GenerateTurnSummaryAsync(id, race, turn, ct);
+        return summary is null
+            ? Problem("LLM not available or turn not found.")
+            : Ok(new { summary });
+    }
+
+    // GET /api/games/{id}/ai/summaries — list saved galaxy summaries
+    [HttpGet("{id}/ai/summaries")]
+    public async Task<IActionResult> GetAiSummaries(string id, CancellationToken ct)
+    {
+        var summaries = await svc.GetAiSummariesAsync(id, ct);
+        return Ok(summaries.OrderByDescending(s => s.Turn));
+    }
+
+    // POST /api/games/{id}/ai/summary — generate + save galaxy summary
+    [HttpPost("{id}/ai/summary")]
+    public async Task<IActionResult> GenerateAiSummary(string id, CancellationToken ct)
+    {
+        var summary = await svc.GenerateGalaxySummaryAsync(id, ct);
+        return summary is null
+            ? Problem("LLM not available or game not found.")
+            : Ok(new { summary });
     }
 
     // POST /api/games/{id}/run-turn — manually trigger turn

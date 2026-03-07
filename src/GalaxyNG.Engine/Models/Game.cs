@@ -14,6 +14,12 @@ public sealed class Game
     public List<BattleRecord>           Battles      { get; set; } = [];
     public List<BombingRecord>          Bombings     { get; set; } = [];
 
+    // Turn history (archived per-turn orders + events)
+    public List<TurnHistoryEntry> TurnHistory { get; set; } = [];
+
+    // AI-generated summaries, one per turn
+    public List<AiSummaryEntry> AiSummaries { get; set; } = [];
+
     // Config
     public bool   AutoRunOnAllSubmitted { get; set; } = false;
     public string HostPlayerId          { get; set; } = "";

@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
 # demo.sh — запуск тестовой игры
 # Использование:
-#   ./scripts/demo.sh              # 1 человек + 3 бота
-#   ./scripts/demo.sh -b           # только боты (3 бота, ходы идут автоматически)
-#   ./scripts/demo.sh -b -n 5      # только боты, 5 ботов
-#   ./scripts/demo.sh -s 400       # размер галактики
-#   ./scripts/demo.sh -b -s 300    # только боты + размер
+#   ./scripts/demo.sh                # 1 человек + 3 бота (убивает старые процессы, чистит игры)
+#   ./scripts/demo.sh -b             # только боты
+#   ./scripts/demo.sh -b -n 5        # только боты, 5 штук
+#   ./scripts/demo.sh -s 400         # размер галактики
+#   ./scripts/demo.sh --no-kill      # не убивать уже запущенные процессы
+#   ./scripts/demo.sh --no-clean     # не удалять сохранённые игры
 
 set -euo pipefail
 
@@ -14,6 +15,8 @@ GALAXY_SIZE=200
 BOTS_ONLY=false
 OPEN_BROWSER=false
 NUM_BOTS=3
+DO_KILL=true    # по умолчанию: убиваем старые процессы
+DO_CLEAN=true   # по умолчанию: удаляем сохранённые игры
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -21,12 +24,19 @@ while [[ $# -gt 0 ]]; do
     -n|--bots)      NUM_BOTS="$2"; shift 2 ;;
     -s|--size)      GALAXY_SIZE="$2"; shift 2 ;;
     -o|--open)      OPEN_BROWSER=true; shift ;;
+    --no-kill)      DO_KILL=false; shift ;;
+    --no-clean)     DO_CLEAN=false; shift ;;
     -h|--help)
-      echo "Использование: $0 [-b] [-n NUM_BOTS] [-s SIZE] [-o]"
+      echo "Использование: $0 [опции]"
+      echo ""
       echo "  -b, --bots-only       Все игроки — боты (без человека)"
-      echo "  -n, --bots NUM_BOTS   Количество ботов (по умолчанию: 3)"
+      echo "  -n, --bots NUM        Количество ботов (по умолчанию: 3)"
       echo "  -s, --size SIZE       Размер галактики (по умолчанию: 200)"
       echo "  -o, --open            Открыть браузер после запуска"
+      echo "  --no-kill             Не убивать уже запущенные сервер/боты"
+      echo "  --no-clean            Не удалять сохранённые игры"
+      echo ""
+      echo "По умолчанию: убиваем старые процессы + удаляем все игры."
       exit 0 ;;
     *) echo "Неизвестный флаг: $1" >&2; exit 1 ;;
   esac
@@ -42,10 +52,7 @@ BOT_NAME_POOL=("Alpha" "Beta" "Gamma" "Delta" "Epsilon" "Zeta" "Eta" "Theta")
 BOT_PW_POOL=("pw1" "pw2" "pw3" "pw4" "pw5" "pw6" "pw7" "pw8")
 
 if $BOTS_ONLY; then
-  ALL_NAMES=()
-  ALL_PWS=()
-  BOT_NAMES=()
-  BOT_PWS=()
+  ALL_NAMES=(); ALL_PWS=(); BOT_NAMES=(); BOT_PWS=()
   for i in $(seq 0 $((NUM_BOTS - 1))); do
     ALL_NAMES+=("${BOT_NAME_POOL[$i]}")
     ALL_PWS+=("${BOT_PW_POOL[$i]}")
@@ -53,10 +60,7 @@ if $BOTS_ONLY; then
     BOT_PWS+=("${BOT_PW_POOL[$i]}")
   done
 else
-  ALL_NAMES=("$HUMAN")
-  ALL_PWS=("$HUMAN_PW")
-  BOT_NAMES=()
-  BOT_PWS=()
+  ALL_NAMES=("$HUMAN"); ALL_PWS=("$HUMAN_PW"); BOT_NAMES=(); BOT_PWS=()
   for i in $(seq 0 $((NUM_BOTS - 1))); do
     ALL_NAMES+=("${BOT_NAME_POOL[$i]}")
     ALL_PWS+=("${BOT_PW_POOL[$((i+1))]}")
@@ -69,15 +73,16 @@ REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 SERVER_DIR="$REPO_ROOT/src/GalaxyNG.Server"
 WEB_DIR="$REPO_ROOT/src/GalaxyNG.Web"
 BOT_DIR="$REPO_ROOT/src/GalaxyNG.Bot"
+GAMES_DIR="${HOME}/.galaxyng/games"
 
 # ── Цвета ────────────────────────────────────────────────────────────────────
-GREEN='\033[0;32m'; YELLOW='\033[1;33m'; CYAN='\033[0;36m'; NC='\033[0m'
+GREEN='\033[0;32m'; YELLOW='\033[1;33m'; CYAN='\033[0;36m'; RED='\033[0;31m'; NC='\033[0m'
 info() { echo -e "${CYAN}▶ $*${NC}"; }
 ok()   { echo -e "${GREEN}✓ $*${NC}"; }
 warn() { echo -e "${YELLOW}! $*${NC}"; }
 
 SERVER_PID=""
-SERVER_MANAGED=false   # true если МЫ запустили сервер (тогда надо убивать)
+SERVER_MANAGED=false
 BOT_PIDS=()
 
 cleanup() {
@@ -90,11 +95,59 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
+# ── Шаг 0: остановить старые процессы и/или удалить игры ─────────────────────
+if $DO_KILL || $DO_CLEAN; then
+  echo ""
+  echo -e "${RED}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+fi
+
+if $DO_KILL; then
+  info "Шаг 0а — Останавливаем старые процессы…"
+
+  # Убиваем боты (любые dotnet-процессы с GalaxyNG.Bot)
+  BOT_PIDS_OLD=$(pgrep -f "GalaxyNG.Bot" 2>/dev/null || true)
+  if [[ -n "$BOT_PIDS_OLD" ]]; then
+    echo "$BOT_PIDS_OLD" | xargs kill 2>/dev/null || true
+    ok "Старые боты остановлены (PID: $(echo "$BOT_PIDS_OLD" | tr '\n' ' '))"
+  else
+    warn "Активных ботов не найдено"
+  fi
+
+  # Убиваем сервер на порту 5055
+  SERVER_PID_OLD=$(lsof -ti :5055 2>/dev/null || true)
+  if [[ -n "$SERVER_PID_OLD" ]]; then
+    echo "$SERVER_PID_OLD" | xargs kill 2>/dev/null || true
+    # Ждём освобождения порта (до 10 сек)
+    for i in $(seq 1 10); do
+      lsof -ti :5055 > /dev/null 2>&1 || break
+      sleep 1
+    done
+    ok "Старый сервер остановлен (PID: $SERVER_PID_OLD)"
+  else
+    warn "Сервер на :5055 не запущен"
+  fi
+fi
+
+if $DO_CLEAN; then
+  info "Шаг 0б — Удаляем сохранённые игры…"
+  if [[ -d "$GAMES_DIR" ]]; then
+    GAME_COUNT=$(find "$GAMES_DIR" -maxdepth 1 -mindepth 1 -type d 2>/dev/null | wc -l | tr -d ' ')
+    rm -rf "$GAMES_DIR"
+    ok "Удалено игр: $GAME_COUNT (${GAMES_DIR})"
+  else
+    warn "Папка игр не найдена — уже чисто"
+  fi
+fi
+
+if $DO_KILL || $DO_CLEAN; then
+  echo -e "${RED}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+  echo ""
+fi
+
 # ── Шаг 1: сборка frontend ───────────────────────────────────────────────────
 info "Шаг 1/5 — Сборка frontend…"
 cd "$WEB_DIR"
 
-# Активируем nvm если доступен
 export NVM_DIR="${NVM_DIR:-$HOME/.nvm}"
 # shellcheck disable=SC1091
 [[ -s "$NVM_DIR/nvm.sh" ]] && source "$NVM_DIR/nvm.sh" --no-use
@@ -113,11 +166,11 @@ dotnet build -c Release -v quiet 2>&1 | tail -3
 if curl -sf "$SERVER_URL/api/games" > /dev/null 2>&1; then
   warn "Сервер уже работает на $SERVER_URL — используем существующий"
 else
-  dotnet run -c Release --no-build --no-launch-profile --urls "http://localhost:5055" > /tmp/galaxyng-server.log 2>&1 &
+  dotnet run -c Release --no-build --no-launch-profile --urls "http://localhost:5055" \
+    > /tmp/galaxyng-server.log 2>&1 &
   SERVER_PID=$!
   SERVER_MANAGED=true
 
-  # Ждём пока сервер поднимется (до 60 сек)
   info "Ожидаем готовности сервера…"
   MAX_WAIT=60
   for i in $(seq 1 $MAX_WAIT); do
@@ -145,7 +198,6 @@ fi
 # ── Шаг 3: создание игры ─────────────────────────────────────────────────────
 info "Шаг 3/5 — Создание игры «${GAME_NAME}» (размер: ${GALAXY_SIZE})…"
 
-# Формируем JSON-массив игроков
 PLAYERS_JSON="["
 for i in "${!ALL_NAMES[@]}"; do
   [[ $i -gt 0 ]] && PLAYERS_JSON+=","
@@ -197,9 +249,7 @@ echo ""
 echo -e "${GREEN}═══════════════════════════════════════════════════════${NC}"
 ok "Игра готова!"
 echo ""
-if $BOTS_ONLY; then
-  ok "Режим: только боты (autoRun=true, ходы идут автоматически)"
-fi
+$BOTS_ONLY && ok "Режим: только боты (autoRun=true, ходы идут автоматически)"
 echo ""
 echo "  Открыть в браузере:"
 echo -e "  ${CYAN}$BROWSER_URL${NC}"
@@ -213,22 +263,17 @@ echo ""
 warn "Нажмите Ctrl+C для остановки всех процессов."
 echo -e "${GREEN}═══════════════════════════════════════════════════════${NC}"
 
-# Открываем браузер если флаг -o
 if $OPEN_BROWSER; then
   info "Открываем браузер…"
   if command -v open &>/dev/null; then
-    open "$BROWSER_URL"           # macOS
+    open "$BROWSER_URL"
   elif command -v xdg-open &>/dev/null; then
-    xdg-open "$BROWSER_URL"       # Linux
-  elif command -v start &>/dev/null; then
-    start "$BROWSER_URL"          # Windows (Git Bash)
+    xdg-open "$BROWSER_URL"
   else
     warn "Не удалось открыть браузер автоматически."
   fi
 fi
 
-# Держим скрипт живым до Ctrl+C
-# Если МЫ запустили сервер — ждём его; иначе ждём ботов (они крутятся вечно)
 if $SERVER_MANAGED && [[ -n "$SERVER_PID" ]]; then
   wait "$SERVER_PID"
 else

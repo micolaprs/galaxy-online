@@ -86,6 +86,33 @@ export interface LogEntry {
   time: string;
 }
 
+// Planet detail (public spectate, no auth)
+export interface PlanetDetail {
+  name: string; x: number; y: number; size: number; resources: number;
+  population: number; industry: number; ownerId: string | null; ownerName: string | null;
+  isHome: boolean; production: number; producing: string; shipTypeName: string | null;
+  stockpiles: { capital: number; materials: number; colonists: number };
+  groups: Array<{ ships: number; shipTypeName: string; ownerName: string; ownerId: string }>;
+}
+
+// Turn history
+export interface TurnHistoryEntry {
+  turn: number; runAt: string;
+  players: string[]; battleCount: number; bombingCount: number;
+  battles: string[]; bombings: string[];
+}
+
+// Player's orders for a turn
+export interface TurnPlayerOrders {
+  turn: number; race: string; orders: string;
+  battles: string[]; bombings: string[];
+}
+
+// AI summary entry
+export interface AiSummaryEntry {
+  turn: number; summary: string; generatedAt: string;
+}
+
 // Stored in localStorage
 export interface Session {
   gameId: string;

@@ -1,0 +1,16 @@
+namespace GalaxyNG.Engine.Models;
+
+public sealed class TurnHistoryEntry
+{
+    public int    Turn    { get; set; }
+    public DateTime RunAt { get; set; } = DateTime.UtcNow;
+
+    /// <summary>Raw order text per player: raceName → ordersText.</summary>
+    public Dictionary<string, string> PlayerOrders { get; set; } = [];
+
+    /// <summary>Human-readable battle descriptions.</summary>
+    public List<string> Battles  { get; set; } = [];
+
+    /// <summary>Human-readable bombing descriptions.</summary>
+    public List<string> Bombings { get; set; } = [];
+}

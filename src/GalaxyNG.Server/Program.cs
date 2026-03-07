@@ -26,6 +26,7 @@ builder.Services.AddSingleton<TurnProcessor>(sp => new TurnProcessor(
 
 // Server services
 builder.Services.AddSingleton<GameStore>();
+builder.Services.AddSingleton<LlmService>();
 builder.Services.AddSingleton<GameService>();
 
 // ASP.NET

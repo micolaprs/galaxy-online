@@ -1,4 +1,7 @@
-import type { CreateGameResponse, GameDetail, GameSummary, Session, SpectateData } from '../types/api.js';
+import type {
+  CreateGameResponse, GameDetail, GameSummary, Session, SpectateData,
+  PlanetDetail, TurnHistoryEntry, TurnPlayerOrders, AiSummaryEntry,
+} from '../types/api.js';
 
 export class ApiClient {
   constructor(private readonly base: string = '') {}
@@ -59,6 +62,39 @@ export class ApiClient {
     );
     if (!r.ok) throw new Error(`Forecast fetch failed: ${r.status}`);
     return r.text();
+  }
+
+  // ---- Planet detail ----
+
+  async getPlanetDetail(gameId: string, planetName: string): Promise<PlanetDetail> {
+    return this.get(`/api/games/${gameId}/spectate/planet/${encodeURIComponent(planetName)}`);
+  }
+
+  // ---- History ----
+
+  async getHistory(gameId: string): Promise<TurnHistoryEntry[]> {
+    return this.get(`/api/games/${gameId}/history`);
+  }
+
+  async getTurnPlayerOrders(gameId: string, turn: number, race: string): Promise<TurnPlayerOrders> {
+    return this.get(`/api/games/${gameId}/history/${turn}/player/${encodeURIComponent(race)}`);
+  }
+
+  async getTurnSummary(gameId: string, turn: number, race: string): Promise<string> {
+    const r = await this.post<{ summary: string }>(
+      `/api/games/${gameId}/history/${turn}/player/${encodeURIComponent(race)}/summary`, {});
+    return r.summary;
+  }
+
+  // ---- AI summaries ----
+
+  async getAiSummaries(gameId: string): Promise<AiSummaryEntry[]> {
+    return this.get(`/api/games/${gameId}/ai/summaries`);
+  }
+
+  async generateGalaxySummary(gameId: string): Promise<string> {
+    const r = await this.post<{ summary: string }>(`/api/games/${gameId}/ai/summary`, {});
+    return r.summary;
   }
 
   // ---- Turn ----
