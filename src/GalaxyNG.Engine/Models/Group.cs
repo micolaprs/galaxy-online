@@ -13,6 +13,9 @@ public sealed class Group
     public string?           Origin      { get; set; }   // planet name of departure
     public double            Distance    { get; set; }   // remaining distance to destination
     public bool              InHyperspace=> Destination is not null && Distance > 0;
+    public string?           LastRouteOrigin { get; set; }
+    public string?           LastRouteDestination { get; set; }
+    public int               LastRouteTurn { get; set; }
 
     // Cargo
     public string?  CargoType   { get; set; }   // CAP | COL | MAT | null

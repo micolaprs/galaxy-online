@@ -21,6 +21,7 @@ export interface ThreeFleetRoute {
   color: string;
   fleetName?: string;
   ships?: number;
+  active?: boolean;
 }
 
 const STAR_COUNT = 800;
@@ -52,8 +53,9 @@ interface ClickPulse {
 interface FleetRouteVisual {
   route: ThreeFleetRoute;
   baseLine: THREE.Line;
+  glowBand: THREE.Mesh;
   laneDots: THREE.Points;
-  runner: THREE.Mesh;
+  runners: THREE.Mesh[];
   start: THREE.Vector3;
   end: THREE.Vector3;
   speed: number;
@@ -344,12 +346,31 @@ export class GalaxyMapThree {
       this.scene.add(baseLine);
       this.cleanupMeshes.push(baseLine);
 
+      const dir = new THREE.Vector3().subVectors(end, start);
+      const length = dir.length();
+      const routeMid = new THREE.Vector3().addVectors(start, end).multiplyScalar(0.5);
+      const bandGeo = new THREE.PlaneGeometry(length, 0.95);
+      const bandMat = new THREE.MeshBasicMaterial({
+        color: this.hexColor(route.color),
+        transparent: true,
+        opacity: 0.22,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+        side: THREE.DoubleSide,
+      });
+      const glowBand = new THREE.Mesh(bandGeo, bandMat);
+      glowBand.position.set(routeMid.x, routeMid.y, 0.03);
+      glowBand.rotation.z = Math.atan2(dir.y, dir.x);
+      this.scene.add(glowBand);
+      this.cleanupMeshes.push(glowBand);
+
       const dotPositions = new Float32Array(ROUTE_POINT_COUNT * 3);
       const laneGeometry = new THREE.BufferGeometry();
       laneGeometry.setAttribute('position', new THREE.BufferAttribute(dotPositions, 3));
       const laneMaterial = new THREE.PointsMaterial({
         color: this.hexColor(route.color),
-        size: 0.9,
+        size: 6,
+        sizeAttenuation: false,
         transparent: true,
         opacity: 0.95,
         blending: THREE.AdditiveBlending,
@@ -360,25 +381,31 @@ export class GalaxyMapThree {
       this.scene.add(laneDots);
       this.cleanupMeshes.push(laneDots);
 
-      const runnerGeo = new THREE.SphereGeometry(0.26, 12, 12);
-      const runnerMat = new THREE.MeshBasicMaterial({
-        color: this.hexColor(route.color),
-        transparent: true,
-        opacity: 0.95,
-        blending: THREE.AdditiveBlending,
-        depthWrite: false,
-      });
-      const runner = new THREE.Mesh(runnerGeo, runnerMat);
-      runner.position.copy(start);
-      runner.position.z = 0.12;
-      this.scene.add(runner);
-      this.cleanupMeshes.push(runner);
+      const runners: THREE.Mesh[] = [];
+      for (let i = 0; i < 3; i++) {
+        const runnerGeo = new THREE.ConeGeometry(0.45, 1.1, 10);
+        const runnerMat = new THREE.MeshBasicMaterial({
+          color: this.hexColor(route.color),
+          transparent: true,
+          opacity: 0.95,
+          blending: THREE.AdditiveBlending,
+          depthWrite: false,
+        });
+        const runner = new THREE.Mesh(runnerGeo, runnerMat);
+        runner.position.copy(start);
+        runner.position.z = 0.14;
+        runner.rotation.z = Math.atan2(dir.y, dir.x) - Math.PI / 2;
+        this.scene.add(runner);
+        this.cleanupMeshes.push(runner);
+        runners.push(runner);
+      }
 
       this.routeVisuals.push({
         route,
         baseLine,
+        glowBand,
         laneDots,
-        runner,
+        runners,
         start,
         end,
         speed: 0.35 + Math.random() * 0.25,
@@ -643,22 +670,36 @@ export class GalaxyMapThree {
       attrs.needsUpdate = true;
 
       const runnerT = phase;
-      route.runner.position.set(from.x + dx * runnerT, from.y + dy * runnerT, 0.12);
-      route.runner.visible = routeShown;
+      for (let i = 0; i < route.runners.length; i++) {
+        const runner = route.runners[i]!;
+        const offset = (i / route.runners.length) * 0.42;
+        const t = (runnerT + offset) % 1;
+        runner.position.set(from.x + dx * t, from.y + dy * t, 0.14);
+        runner.visible = routeShown;
+      }
 
       const baseMat = route.baseLine.material as THREE.LineBasicMaterial;
+      const glowMat = route.glowBand.material as THREE.MeshBasicMaterial;
       const laneMat = route.laneDots.material as THREE.PointsMaterial;
-      const runnerMat = route.runner.material as THREE.MeshBasicMaterial;
       if (routeShown) {
         const blink = (Math.sin(this.clock * 6 + route.speed * 11) + 1) / 2;
-        baseMat.opacity = 0.35 + blink * 0.55; // bright race-colored blinking route line
-        laneMat.opacity = 0.45 + blink * 0.5;
-        runnerMat.opacity = 0.55 + blink * 0.45;
-        route.runner.scale.setScalar(0.85 + blink * 0.55);
+        const activeFactor = route.route.active === false ? 0.45 : 1;
+        baseMat.opacity = (0.35 + blink * 0.55) * activeFactor; // bright race-colored blinking route line
+        glowMat.opacity = (0.18 + blink * 0.34) * activeFactor;
+        laneMat.opacity = (0.45 + blink * 0.5) * activeFactor;
+        for (const runner of route.runners) {
+          const runnerMat = runner.material as THREE.MeshBasicMaterial;
+          runnerMat.opacity = (0.45 + blink * 0.55) * activeFactor;
+          runner.scale.setScalar((0.8 + blink * 0.65) * (route.route.active === false ? 0.8 : 1));
+        }
       } else {
         baseMat.opacity = 0;
+        glowMat.opacity = 0;
         laneMat.opacity = 0;
-        runnerMat.opacity = 0;
+        for (const runner of route.runners) {
+          const runnerMat = runner.material as THREE.MeshBasicMaterial;
+          runnerMat.opacity = 0;
+        }
       }
     }
   }
@@ -667,15 +708,21 @@ export class GalaxyMapThree {
     for (const route of this.routeVisuals) {
       const shown = this.shouldShowRoute(route.route);
       route.baseLine.visible = shown;
+      route.glowBand.visible = shown;
       route.laneDots.visible = shown;
-      route.runner.visible = shown;
+      route.runners.forEach(r => r.visible = shown);
 
       const baseMat = route.baseLine.material as THREE.LineBasicMaterial;
+      const glowMat = route.glowBand.material as THREE.MeshBasicMaterial;
       const laneMat = route.laneDots.material as THREE.PointsMaterial;
-      baseMat.opacity = shown ? 0.7 : 0;
-      laneMat.opacity = shown ? 0.9 : 0;
-      const runnerMat = route.runner.material as THREE.MeshBasicMaterial;
-      runnerMat.opacity = shown ? 0.95 : 0;
+      const activeFactor = route.route.active === false ? 0.45 : 1;
+      baseMat.opacity = shown ? 0.7 * activeFactor : 0;
+      glowMat.opacity = shown ? 0.35 * activeFactor : 0;
+      laneMat.opacity = shown ? 0.9 * activeFactor : 0;
+      route.runners.forEach(r => {
+        const mat = r.material as THREE.MeshBasicMaterial;
+        mat.opacity = shown ? 0.95 * activeFactor : 0;
+      });
     }
   }
 

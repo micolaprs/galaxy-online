@@ -274,6 +274,7 @@ export class WatchView {
           color: this.playerColorMap.get(route.ownerId) ?? '#94a3b8',
           fleetName: route.fleetName,
           ships: route.ships,
+          active: route.active ?? true,
         };
       })
       .filter((route): route is ThreeFleetRoute => route !== null);

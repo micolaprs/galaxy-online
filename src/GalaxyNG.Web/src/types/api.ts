@@ -101,6 +101,7 @@ export interface SpectateFleetRoute {
   origin: string;
   destination: string;
   ships: number;
+  active?: boolean;
 }
 
 // Bot real-time status (via SignalR)

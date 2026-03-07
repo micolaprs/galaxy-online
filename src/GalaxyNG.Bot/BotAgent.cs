@@ -332,7 +332,7 @@ public sealed class BotAgent(
 
         var home = myPlanets[0];
         var groups = ParseGroupNumbers(report);
-        var target = await FindDistantTargetPlanetAsync(home.Name, ct);
+        var target = await FindNearestTargetPlanetAsync(home.Name, ct);
 
         var lines = new List<string> { "o AUTOUNLOAD" };
         var hasHaulerDesign = ReportMentionsShipType(report, "Hauler");
@@ -352,7 +352,7 @@ public sealed class BotAgent(
             lines.Add("@");
         }
 
-        if (groups.Count > 0 && !string.IsNullOrWhiteSpace(target))
+        if (turn == 1 && groups.Count > 0 && !string.IsNullOrWhiteSpace(target))
             lines.Add($"s {groups[0]} {target}");
 
         if (turn >= 3 && groups.Count > 1 && !string.IsNullOrWhiteSpace(target))
@@ -361,7 +361,7 @@ public sealed class BotAgent(
         return string.Join('\n', lines);
     }
 
-    private async Task<string?> FindDistantTargetPlanetAsync(string homePlanet, CancellationToken ct)
+    private async Task<string?> FindNearestTargetPlanetAsync(string homePlanet, CancellationToken ct)
     {
         try
         {
@@ -384,20 +384,20 @@ public sealed class BotAgent(
 
             var preferred = planets
                 .Where(p => !p.Name.Equals(home.Name, StringComparison.OrdinalIgnoreCase) && p.OwnerId is null)
-                .OrderByDescending(p => Distance(home, p))
+                .OrderBy(p => Distance(home, p))
                 .FirstOrDefault();
             if (preferred is not null)
                 return preferred.Name;
 
             return planets
                 .Where(p => !p.Name.Equals(home.Name, StringComparison.OrdinalIgnoreCase))
-                .OrderByDescending(p => Distance(home, p))
+                .OrderBy(p => Distance(home, p))
                 .Select(p => p.Name)
                 .FirstOrDefault();
         }
         catch (Exception ex)
         {
-            logger.LogDebug("Could not find opening distant target planet: {Msg}", ex.Message);
+            logger.LogDebug("Could not find opening nearest target planet: {Msg}", ex.Message);
             return null;
         }
     }

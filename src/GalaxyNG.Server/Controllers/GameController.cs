@@ -112,18 +112,27 @@ public sealed class GameController(GameService svc) : ControllerBase
 
         var fleetRoutes = game.Players.Values
             .SelectMany(p => p.Groups
-                .Where(g => g.InHyperspace
-                            && !string.IsNullOrWhiteSpace(g.Origin)
-                            && !string.IsNullOrWhiteSpace(g.Destination))
+                .Where(g =>
+                    (g.InHyperspace
+                     && !string.IsNullOrWhiteSpace(g.Origin)
+                     && !string.IsNullOrWhiteSpace(g.Destination)
+                     && !string.Equals(g.Origin, g.Destination, StringComparison.OrdinalIgnoreCase))
+                    ||
+                    (!g.InHyperspace
+                     && !string.IsNullOrWhiteSpace(g.LastRouteOrigin)
+                     && !string.IsNullOrWhiteSpace(g.LastRouteDestination)
+                     && !string.Equals(g.LastRouteOrigin, g.LastRouteDestination, StringComparison.OrdinalIgnoreCase)
+                     && game.Turn - g.LastRouteTurn <= 4))
                 .Select(g => new
                 {
                     ownerId = p.Id,
                     fleetName = string.IsNullOrWhiteSpace(g.FleetName) ? $"Group {g.Number}" : g.FleetName!,
-                    origin = g.Origin!,
-                    destination = g.Destination!,
+                    origin = g.InHyperspace ? g.Origin! : g.LastRouteOrigin!,
+                    destination = g.InHyperspace ? g.Destination! : g.LastRouteDestination!,
                     ships = g.Ships,
+                    active = g.InHyperspace,
                 }))
-            .GroupBy(r => new { r.ownerId, r.fleetName, r.origin, r.destination })
+            .GroupBy(r => new { r.ownerId, r.fleetName, r.origin, r.destination, r.active })
             .Select(g => new
             {
                 g.Key.ownerId,
@@ -131,6 +140,7 @@ public sealed class GameController(GameService svc) : ControllerBase
                 g.Key.origin,
                 g.Key.destination,
                 ships = g.Sum(x => x.ships),
+                active = g.Key.active,
             })
             .ToList();
 

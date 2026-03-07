@@ -51,6 +51,9 @@ public sealed class MovementEngine
         group.Origin      = group.At;
         group.Destination = destination.Name;
         group.Distance    = dist - speed;  // move happens immediately this turn
+        group.LastRouteOrigin = group.Origin;
+        group.LastRouteDestination = destination.Name;
+        group.LastRouteTurn = game.Turn;
 
         if (group.Distance <= 0)
         {
