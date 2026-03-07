@@ -154,7 +154,7 @@ export class WatchView {
     // Player history panel
     const playersTab = this.el.querySelector<HTMLElement>('#tab-players')!;
     this.playerHistoryPanel = new PlayerHistoryPanel(
-      playersTab, this.gameId, this.playerColorMap);
+      playersTab, this.gameId, this.playerColorMap, this.botStatuses);
 
     // Galaxy summary panel (lazy init after first data)
     this.map.onPlanetClick = (name) => this.planetPanel.show(name);

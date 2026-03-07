@@ -525,3 +525,16 @@ input:focus { outline: none; border-color: var(--accent); }
 
 /* Utility */
 .muted { color: var(--muted); }
+
+/* ---- Bot status badge in player list ---- */
+.ph-status {
+  font-size: 10px; padding: 1px 6px; border-radius: 10px;
+  margin-left: 4px; white-space: nowrap; flex-shrink: 0;
+  background: rgba(255,255,255,.07); color: var(--muted);
+}
+.ph-status-waiting   { color: #94a3b8; }
+.ph-status-active    { color: #38bdf8; background: rgba(56,189,248,.12); }
+.ph-status-thinking  { color: #a78bfa; background: rgba(167,139,250,.12); }
+.ph-status-submitted { color: #4ade80; background: rgba(74,222,128,.12); }
+.ph-status-idle      { color: #475569; }
+.ph-status-error     { color: #f87171; background: rgba(248,113,113,.12); }

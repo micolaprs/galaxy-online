@@ -1,12 +1,34 @@
 import { api } from '../api/client.js';
-import type { TurnHistoryEntry, TurnPlayerOrders } from '../types/api.js';
-import type { SpectatePlayer } from '../types/api.js';
+import type { TurnHistoryEntry, TurnPlayerOrders, SpectatePlayer, BotStatusEvent } from '../types/api.js';
+
+const STATUS_LABEL: Record<string, string> = {
+  idle:             '💤 idle',
+  waiting:          '⏳ ждёт хода',
+  'reading-report': '📖 читает отчёт',
+  thinking:         '🧠 думает…',
+  validating:       '🔍 проверяет',
+  submitting:       '📤 отправляет',
+  submitted:        '✓ отправил',
+  error:            '❌ ошибка',
+};
+
+const STATUS_CSS: Record<string, string> = {
+  idle:             'idle',
+  waiting:          'waiting',
+  'reading-report': 'active',
+  thinking:         'thinking',
+  validating:       'active',
+  submitting:       'active',
+  submitted:        'submitted',
+  error:            'error',
+};
 
 export class PlayerHistoryPanel {
   private el: HTMLElement;
   private gameId: string;
   private players: SpectatePlayer[] = [];
   private playerColorMap: Map<string, string>;
+  private botStatuses: Map<string, BotStatusEvent>;
 
   private selectedRace: string | null = null;
   private history: TurnHistoryEntry[] = [];
@@ -19,9 +41,11 @@ export class PlayerHistoryPanel {
     container: HTMLElement,
     gameId: string,
     playerColorMap: Map<string, string>,
+    botStatuses: Map<string, BotStatusEvent>,
   ) {
     this.gameId         = gameId;
     this.playerColorMap = playerColorMap;
+    this.botStatuses    = botStatuses;
     this.el             = container;
   }
 
@@ -33,12 +57,30 @@ export class PlayerHistoryPanel {
   private renderPlayerList(): void {
     const colorDots = this.players.map(p => {
       const color = this.playerColorMap.get(p.id) ?? '#888';
+
+      // Determine status label + css class
+      let statusKey = '';
+      if (p.isEliminated) {
+        statusKey = '';
+      } else if (p.isBot) {
+        const ev = this.botStatuses.get(p.name);
+        statusKey = ev ? ev.status : (p.submitted ? 'submitted' : 'waiting');
+      } else {
+        statusKey = p.submitted ? 'submitted' : '';
+      }
+      const statusLabel = STATUS_LABEL[statusKey] ?? '';
+      const statusCss   = STATUS_CSS[statusKey]   ?? '';
+      const statusHtml  = statusLabel
+        ? `<span class="ph-status ph-status-${statusCss}">${statusLabel}</span>`
+        : '';
+
       return `
         <div class="ph-player ${p.isEliminated ? 'eliminated' : ''}"
              data-race="${esc(p.name)}" style="--dot:${color}">
           <span class="ph-dot"></span>
           <span class="ph-icon">${p.isBot ? '🤖' : '👤'}</span>
           <span class="ph-name">${esc(p.name)}</span>
+          ${statusHtml}
           <span class="ph-count muted">${p.planetCount}🌍</span>
         </div>
       `;

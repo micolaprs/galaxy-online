@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # demo.sh — запуск тестовой игры
 # Использование:
-#   ./scripts/demo.sh                # 1 человек + 3 бота (убивает старые процессы, чистит игры)
-#   ./scripts/demo.sh -b             # только боты
+#   ./scripts/demo.sh                # 3 бота (убивает старые процессы, чистит игры)
 #   ./scripts/demo.sh -b -n 5        # только боты, 5 штук
+#   ./scripts/demo.sh -n 5           # 5 ботов
 #   ./scripts/demo.sh -s 400         # размер галактики
 #   ./scripts/demo.sh --no-kill      # не убивать уже запущенные процессы
 #   ./scripts/demo.sh --no-clean     # не удалять сохранённые игры
@@ -12,7 +12,7 @@ set -euo pipefail
 
 # ── Параметры ────────────────────────────────────────────────────────────────
 GALAXY_SIZE=200
-BOTS_ONLY=false
+BOTS_ONLY=true
 OPEN_BROWSER=true
 NUM_BOTS=3
 DO_KILL=true    # по умолчанию: убиваем старые процессы
