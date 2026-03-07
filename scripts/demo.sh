@@ -77,13 +77,14 @@ ok()   { echo -e "${GREEN}✓ $*${NC}"; }
 warn() { echo -e "${YELLOW}! $*${NC}"; }
 
 SERVER_PID=""
+SERVER_MANAGED=false   # true если МЫ запустили сервер (тогда надо убивать)
 BOT_PIDS=()
 
 cleanup() {
   echo ""
   info "Останавливаем все фоновые процессы…"
   [[ ${#BOT_PIDS[@]} -gt 0 ]] && kill "${BOT_PIDS[@]}" 2>/dev/null || true
-  [[ -n "$SERVER_PID" ]]      && kill "$SERVER_PID"    2>/dev/null || true
+  $SERVER_MANAGED && [[ -n "$SERVER_PID" ]] && kill "$SERVER_PID" 2>/dev/null || true
   wait 2>/dev/null || true
   ok "Готово."
 }
@@ -108,32 +109,38 @@ ok "Frontend собран → wwwroot/"
 info "Шаг 2/5 — Сборка и запуск сервера…"
 cd "$SERVER_DIR"
 dotnet build -c Release -v quiet 2>&1 | tail -3
-dotnet run -c Release --no-build --no-launch-profile --urls "http://localhost:5055" > /tmp/galaxyng-server.log 2>&1 &
-SERVER_PID=$!
 
-# Ждём пока сервер поднимется (до 60 сек)
-info "Ожидаем готовности сервера…"
-MAX_WAIT=60
-for i in $(seq 1 $MAX_WAIT); do
-  if curl -sf "$SERVER_URL/api/games" > /dev/null 2>&1; then
-    ok "Сервер запущен (PID $SERVER_PID, лог: /tmp/galaxyng-server.log)"
-    break
-  fi
-  if ! kill -0 "$SERVER_PID" 2>/dev/null; then
-    echo "Сервер завершился с ошибкой! Лог:" >&2
-    cat /tmp/galaxyng-server.log >&2
-    exit 1
-  fi
-  printf "."
-  sleep 1
-  if [[ $i -eq $MAX_WAIT ]]; then
-    echo ""
-    echo "Сервер не ответил за ${MAX_WAIT}с! Лог:" >&2
-    cat /tmp/galaxyng-server.log >&2
-    exit 1
-  fi
-done
-echo ""
+if curl -sf "$SERVER_URL/api/games" > /dev/null 2>&1; then
+  warn "Сервер уже работает на $SERVER_URL — используем существующий"
+else
+  dotnet run -c Release --no-build --no-launch-profile --urls "http://localhost:5055" > /tmp/galaxyng-server.log 2>&1 &
+  SERVER_PID=$!
+  SERVER_MANAGED=true
+
+  # Ждём пока сервер поднимется (до 60 сек)
+  info "Ожидаем готовности сервера…"
+  MAX_WAIT=60
+  for i in $(seq 1 $MAX_WAIT); do
+    if curl -sf "$SERVER_URL/api/games" > /dev/null 2>&1; then
+      ok "Сервер запущен (PID $SERVER_PID, лог: /tmp/galaxyng-server.log)"
+      break
+    fi
+    if ! kill -0 "$SERVER_PID" 2>/dev/null; then
+      echo "Сервер завершился с ошибкой! Лог:" >&2
+      cat /tmp/galaxyng-server.log >&2
+      exit 1
+    fi
+    printf "."
+    sleep 1
+    if [[ $i -eq $MAX_WAIT ]]; then
+      echo ""
+      echo "Сервер не ответил за ${MAX_WAIT}с! Лог:" >&2
+      cat /tmp/galaxyng-server.log >&2
+      exit 1
+    fi
+  done
+  echo ""
+fi
 
 # ── Шаг 3: создание игры ─────────────────────────────────────────────────────
 info "Шаг 3/5 — Создание игры «${GAME_NAME}» (размер: ${GALAXY_SIZE})…"
@@ -221,4 +228,9 @@ if $OPEN_BROWSER; then
 fi
 
 # Держим скрипт живым до Ctrl+C
-wait "$SERVER_PID"
+# Если МЫ запустили сервер — ждём его; иначе ждём ботов (они крутятся вечно)
+if $SERVER_MANAGED && [[ -n "$SERVER_PID" ]]; then
+  wait "$SERVER_PID"
+else
+  wait "${BOT_PIDS[@]}"
+fi
