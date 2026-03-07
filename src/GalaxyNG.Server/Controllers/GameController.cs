@@ -108,6 +108,32 @@ public sealed class GameController(GameService svc) : ControllerBase
     {
         var game = await svc.GetGameAsync(id, ct);
         if (game is null) return NotFound();
+
+        var fleetRoutes = game.Players.Values
+            .SelectMany(p => p.Groups
+                .Where(g => g.InHyperspace
+                            && !string.IsNullOrWhiteSpace(g.FleetName)
+                            && !string.IsNullOrWhiteSpace(g.Origin)
+                            && !string.IsNullOrWhiteSpace(g.Destination))
+                .Select(g => new
+                {
+                    ownerId = p.Id,
+                    fleetName = g.FleetName!,
+                    origin = g.Origin!,
+                    destination = g.Destination!,
+                    ships = g.Ships,
+                }))
+            .GroupBy(r => new { r.ownerId, r.fleetName, r.origin, r.destination })
+            .Select(g => new
+            {
+                g.Key.ownerId,
+                g.Key.fleetName,
+                g.Key.origin,
+                g.Key.destination,
+                ships = g.Sum(x => x.ships),
+            })
+            .ToList();
+
         return Ok(new
         {
             game.Id, game.Name, game.Turn, game.GalaxySize,
@@ -132,6 +158,7 @@ public sealed class GameController(GameService svc) : ControllerBase
             {
                 b.PlanetName, b.AttackerRace, b.PreviousOwner,
             }),
+            fleetRoutes,
         });
     }
 

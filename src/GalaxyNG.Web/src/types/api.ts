@@ -57,6 +57,7 @@ export interface SpectateData {
   planets: SpectatePlanet[];
   battles: SpectateBattle[];
   bombings: SpectateBombing[];
+  fleetRoutes: SpectateFleetRoute[];
 }
 export interface SpectatePlayer {
   id: string; name: string; isBot: boolean;
@@ -69,6 +70,13 @@ export interface SpectatePlanet {
 }
 export interface SpectateBattle  { planetName: string; winner: string; participants: string[]; }
 export interface SpectateBombing { planetName: string; attackerRace: string; previousOwner: string | null; }
+export interface SpectateFleetRoute {
+  ownerId: string;
+  fleetName: string;
+  origin: string;
+  destination: string;
+  ships: number;
+}
 
 // Bot real-time status (via SignalR)
 export interface BotStatusEvent {

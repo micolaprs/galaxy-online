@@ -11,8 +11,19 @@ export interface ThreePlanet {
   population?: number;
 }
 
+export interface ThreeFleetRoute {
+  x1: number;
+  y1: number;
+  x2: number;
+  y2: number;
+  color: string;
+  fleetName?: string;
+  ships?: number;
+}
+
 const STAR_COUNT = 800;
 const ASTEROID_COUNT = 11;
+const ROUTE_POINT_COUNT = 16;
 
 interface PlanetVisual {
   planet: ThreePlanet;
@@ -36,6 +47,14 @@ interface ClickPulse {
   ttl: number;
 }
 
+interface FleetRouteVisual {
+  baseLine: THREE.Line;
+  laneDots: THREE.Points;
+  start: THREE.Vector3;
+  end: THREE.Vector3;
+  speed: number;
+}
+
 export class GalaxyMapThree {
   private renderer!: THREE.WebGLRenderer;
   private scene!:    THREE.Scene;
@@ -48,6 +67,8 @@ export class GalaxyMapThree {
   private asteroidFlybys: AsteroidFlyby[] = [];
   private clickPulses: ClickPulse[] = [];
   private planets: ThreePlanet[] = [];
+  private fleetRoutes: ThreeFleetRoute[] = [];
+  private routeVisuals: FleetRouteVisual[] = [];
   private galaxySize = 200;
 
   // Selection ring
@@ -82,9 +103,10 @@ export class GalaxyMapThree {
 
   // ---- Public API ----
 
-  setData(galaxySize: number, planets: ThreePlanet[]): void {
+  setData(galaxySize: number, planets: ThreePlanet[], fleetRoutes: ThreeFleetRoute[] = []): void {
     this.galaxySize = galaxySize;
     this.planets    = planets;
+    this.fleetRoutes = fleetRoutes;
     this.buildPlanetMeshes();
     this.fitToView();
     this.render();
@@ -286,7 +308,52 @@ export class GalaxyMapThree {
     }
 
     this.buildAsteroidFlybys();
+    this.buildFleetRouteMeshes();
     this.updateSelectionRing();
+  }
+
+  private buildFleetRouteMeshes(): void {
+    this.routeVisuals = [];
+
+    for (const route of this.fleetRoutes) {
+      const start = new THREE.Vector3(route.x1, -route.y1, -0.04);
+      const end = new THREE.Vector3(route.x2, -route.y2, -0.04);
+      const points = [start, end];
+
+      const baseGeometry = new THREE.BufferGeometry().setFromPoints(points);
+      const baseMaterial = new THREE.LineBasicMaterial({
+        color: this.hexColor(route.color),
+        transparent: true,
+        opacity: 0.32,
+      });
+      const baseLine = new THREE.Line(baseGeometry, baseMaterial);
+      this.scene.add(baseLine);
+      this.cleanupMeshes.push(baseLine);
+
+      const dotPositions = new Float32Array(ROUTE_POINT_COUNT * 3);
+      const laneGeometry = new THREE.BufferGeometry();
+      laneGeometry.setAttribute('position', new THREE.BufferAttribute(dotPositions, 3));
+      const laneMaterial = new THREE.PointsMaterial({
+        color: this.hexColor(route.color),
+        size: 0.9,
+        transparent: true,
+        opacity: 0.95,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+      });
+      const laneDots = new THREE.Points(laneGeometry, laneMaterial);
+      laneDots.position.z = 0.08;
+      this.scene.add(laneDots);
+      this.cleanupMeshes.push(laneDots);
+
+      this.routeVisuals.push({
+        baseLine,
+        laneDots,
+        start,
+        end,
+        speed: 0.35 + Math.random() * 0.25,
+      });
+    }
   }
 
   private updateSelectionRing(): void {
@@ -523,9 +590,27 @@ export class GalaxyMapThree {
     starMat.opacity = 0.45 + Math.sin(this.clock * 0.7) * 0.1;
 
     this.animateAsteroids(dt);
+    this.animateFleetRoutes();
     this.animateClickPulses(dt);
 
     if (this.selectedPlanet) this.updateOverlayPosition();
+  }
+
+  private animateFleetRoutes(): void {
+    for (const route of this.routeVisuals) {
+      const attrs = route.laneDots.geometry.getAttribute('position') as THREE.BufferAttribute;
+      const from = route.start;
+      const to = route.end;
+      const dx = to.x - from.x;
+      const dy = to.y - from.y;
+      const phase = (this.clock * route.speed) % 1;
+
+      for (let i = 0; i < ROUTE_POINT_COUNT; i++) {
+        const t = ((i / ROUTE_POINT_COUNT) + phase) % 1;
+        attrs.setXYZ(i, from.x + dx * t, from.y + dy * t, 0.08);
+      }
+      attrs.needsUpdate = true;
+    }
   }
 
   private animateAsteroids(dt: number): void {
@@ -597,6 +682,7 @@ export class GalaxyMapThree {
     }
     this.cleanupMeshes = [];
     this.planetVisuals = [];
+    this.routeVisuals = [];
     this.clickPulses = [];
     this.disposeAsteroidFlybys();
   }

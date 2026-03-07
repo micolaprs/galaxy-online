@@ -1,7 +1,7 @@
 import { api } from '../api/client.js';
 import { ensureConnected } from '../api/hub.js';
 import type { SpectateData, SpectatePlayer, SpectateBattle, SpectateBombing, BotStatusEvent, TechLevels } from '../types/api.js';
-import { GalaxyMapThree, type ThreePlanet } from './GalaxyMapThree.js';
+import { GalaxyMapThree, type ThreeFleetRoute, type ThreePlanet } from './GalaxyMapThree.js';
 import { PlanetPanel } from './PlanetPanel.js';
 import { PlayerHistoryPanel } from './PlayerHistoryPanel.js';
 import { GalaxySummaryPanel } from './GalaxySummaryPanel.js';
@@ -223,7 +223,26 @@ export class WatchView {
         ? (this.playerColorMap.get(p.ownerId) ?? '#888')
         : '#334466',
     }));
-    this.map.setData(data.galaxySize, planets);
+
+    const planetByName = new Map(planets.map(p => [p.name, p] as const));
+    const fleetRoutes: ThreeFleetRoute[] = (data.fleetRoutes ?? [])
+      .map(route => {
+        const from = planetByName.get(route.origin);
+        const to = planetByName.get(route.destination);
+        if (!from || !to) return null;
+        return {
+          x1: from.x,
+          y1: from.y,
+          x2: to.x,
+          y2: to.y,
+          color: this.playerColorMap.get(route.ownerId) ?? '#94a3b8',
+          fleetName: route.fleetName,
+          ships: route.ships,
+        };
+      })
+      .filter((route): route is ThreeFleetRoute => route !== null);
+
+    this.map.setData(data.galaxySize, planets, fleetRoutes);
   }
 
   private recordTurnEvent(data: SpectateData): void {
