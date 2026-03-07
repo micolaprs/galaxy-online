@@ -13,7 +13,7 @@ set -euo pipefail
 # ── Параметры ────────────────────────────────────────────────────────────────
 GALAXY_SIZE=200
 BOTS_ONLY=false
-OPEN_BROWSER=false
+OPEN_BROWSER=true
 NUM_BOTS=3
 DO_KILL=true    # по умолчанию: убиваем старые процессы
 DO_CLEAN=true   # по умолчанию: удаляем сохранённые игры
@@ -23,7 +23,8 @@ while [[ $# -gt 0 ]]; do
     -b|--bots-only) BOTS_ONLY=true ; shift ;;
     -n|--bots)      NUM_BOTS="$2"; shift 2 ;;
     -s|--size)      GALAXY_SIZE="$2"; shift 2 ;;
-    -o|--open)      OPEN_BROWSER=true; shift ;;
+    -o|--open)      OPEN_BROWSER=true;  shift ;;
+    --no-open)      OPEN_BROWSER=false; shift ;;
     --no-kill)      DO_KILL=false; shift ;;
     --no-clean)     DO_CLEAN=false; shift ;;
     -h|--help)
@@ -32,11 +33,12 @@ while [[ $# -gt 0 ]]; do
       echo "  -b, --bots-only       Все игроки — боты (без человека)"
       echo "  -n, --bots NUM        Количество ботов (по умолчанию: 3)"
       echo "  -s, --size SIZE       Размер галактики (по умолчанию: 200)"
-      echo "  -o, --open            Открыть браузер после запуска"
+      echo "  -o, --open            Открыть браузер после запуска (по умолчанию)"
+      echo "  --no-open             Не открывать браузер"
       echo "  --no-kill             Не убивать уже запущенные сервер/боты"
       echo "  --no-clean            Не удалять сохранённые игры"
       echo ""
-      echo "По умолчанию: убиваем старые процессы + удаляем все игры."
+      echo "По умолчанию: убиваем старые процессы + удаляем все игры + открываем браузер."
       exit 0 ;;
     *) echo "Неизвестный флаг: $1" >&2; exit 1 ;;
   esac
