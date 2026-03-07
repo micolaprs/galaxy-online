@@ -27,15 +27,23 @@ var host = Host.CreateDefaultBuilder(args)
         services.AddSingleton(botConfig);
         services.AddSingleton(botConfig.Llm);
 
-        services.AddHttpClient<LlmClient>("llm", (sp, client) =>
+        services.AddHttpClient("llm", (sp, client) =>
         {
             var c = sp.GetRequiredService<LlmConfig>();
-            client.BaseAddress = new Uri(c.BaseUrl);
+            client.BaseAddress = new Uri(c.BaseUrl.TrimEnd('/') + "/");
             client.DefaultRequestHeaders.Add("Authorization", $"Bearer {c.ApiKey}");
         });
 
         services.AddHttpClient("server");
-        services.AddSingleton<LlmClient>();
+
+        services.AddSingleton<LlmClient>(sp =>
+        {
+            var factory = sp.GetRequiredService<IHttpClientFactory>();
+            var http    = factory.CreateClient("llm");
+            var cfg     = sp.GetRequiredService<LlmConfig>();
+            var log     = sp.GetRequiredService<ILogger<LlmClient>>();
+            return new LlmClient(http, cfg, log);
+        });
         services.AddSingleton<BotAgent>();
         services.AddHostedService<BotHostedService>();
     })

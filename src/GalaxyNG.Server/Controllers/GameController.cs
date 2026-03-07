@@ -23,7 +23,8 @@ public sealed class GameController(GameService svc) : ControllerBase
             StuffPlanets = req.StuffPlanets ?? 5,
         } : null;
 
-        var game = await svc.CreateGameAsync(req.Name, req.Players, opts, req.AutoRun, ct);
+        var players = req.Players.Select(p => (p.Name, p.Password, p.IsBot)).ToList();
+        var game = await svc.CreateGameAsync(req.Name, players, opts, req.AutoRun, ct);
 
         var baseUrl = $"{Request.Scheme}://{Request.Host}";
         return Created($"{baseUrl}/api/games/{game.Id}", new
@@ -105,9 +106,11 @@ public sealed class GameController(GameService svc) : ControllerBase
 
 // ---- DTOs ----
 
+public sealed record PlayerInput(string Name, string Password, bool IsBot = false);
+
 public sealed record CreateGameRequest(
-    string                                 Name,
-    List<(string name, string password, bool isBot)> Players,
+    string            Name,
+    List<PlayerInput> Players,
     double? GalaxySize   = null,
     double? MinDist      = null,
     int?    StuffPlanets = null,

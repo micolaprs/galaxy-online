@@ -28,11 +28,15 @@ public sealed class LlmClient(HttpClient http, LlmConfig config, ILogger<LlmClie
 
         logger.LogDebug("Calling LLM model={Model} messages={Count}", config.Model, messages.Count);
 
-        using var response = await http.PostAsJsonAsync("/chat/completions", request, JsonOpts, ct);
+        using var response = await http.PostAsJsonAsync("chat/completions", request, JsonOpts, ct);
         response.EnsureSuccessStatusCode();
 
-        var result = await response.Content.ReadFromJsonAsync<ChatCompletionResponse>(JsonOpts, ct)
-                     ?? throw new InvalidOperationException("Empty LLM response.");
+        var result = await response.Content.ReadFromJsonAsync<ChatCompletionResponse>(JsonOpts, ct);
+        if (result?.Choices is not { Count: > 0 })
+        {
+            var raw = await response.Content.ReadAsStringAsync(ct);
+            throw new InvalidOperationException($"LLM returned no choices. Body: {raw}");
+        }
 
         return result.Choices[0].Message.Content;
     }

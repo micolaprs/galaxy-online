@@ -60,6 +60,83 @@ http://localhost:5000
 
 ---
 
+## Пример: один игрок + 3 бота
+
+Полный сценарий с одним живым игроком и тремя LLM-ботами, запущенными за ~2 минуты.
+
+### Шаг 1 — создать игру через curl
+
+```bash
+curl -s -X POST http://localhost:5000/api/games \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Solo4",
+    "players": [
+      { "name": "Humans",  "password": "pw1", "isBot": false },
+      { "name": "Alpha",   "password": "pw2", "isBot": true  },
+      { "name": "Beta",    "password": "pw3", "isBot": true  },
+      { "name": "Gamma",   "password": "pw4", "isBot": true  }
+    ],
+    "galaxySize": 200,
+    "autoRun": false
+  }' | tee /tmp/game.json | python3 -m json.tool
+```
+
+Из ответа запомните `gameId` (например `A1B2C3D4`) и `joinLink`.
+
+### Шаг 2 — открыть браузер
+
+```
+http://localhost:5000/?game=A1B2C3D4&race=Humans&pw=pw1
+```
+
+Или просто перейдите по `joinLink` и введите `Humans` / `pw1`.
+
+### Шаг 3 — запустить трёх ботов (три терминала)
+
+```bash
+# Терминал 2 — бот Alpha
+cd src/GalaxyNG.Bot
+Bot__GameId=A1B2C3D4 Bot__RaceName=Alpha Bot__Password=pw2 dotnet run
+
+# Терминал 3 — бот Beta
+Bot__GameId=A1B2C3D4 Bot__RaceName=Beta Bot__Password=pw3 dotnet run
+
+# Терминал 4 — бот Gamma
+Bot__GameId=A1B2C3D4 Bot__RaceName=Gamma Bot__Password=pw4 dotnet run
+```
+
+> Переменные окружения переопределяют `appsettings.json` — `dotnet run` их подхватывает автоматически.
+
+### Шаг 4 — сделать свой ход в браузере
+
+В поле Orders введите первые приказы, например:
+
+```
+d Scout 1 0 0 0 0        ; быстрый разведчик (скорость 20 св.лет/ход)
+d Hauler 2 0 0 0 1       ; транспорт с грузовым отсеком
+p P1 Scout               ; домашняя планета строит разведчики
+```
+
+Нажмите **End Turn** (или `Ctrl+Enter`).
+
+### Шаг 5 — выполнить ход
+
+После того как все четыре расы сдали приказы (или просто когда захотите):
+
+```bash
+curl -X POST http://localhost:5000/api/games/A1B2C3D4/run-turn
+```
+
+Перейдите на вкладку **Turn Report** в браузере — там будут результаты хода.
+
+### Автозапуск хода
+
+При создании игры установите `"autoRun": true` — ход выполнится автоматически,
+как только все (включая ботов) сдадут приказы. Никакого ручного curl не нужно.
+
+---
+
 ## Запуск в режиме разработки
 
 Запускайте сервер и Vite dev-сервер одновременно — изменения в TypeScript отражаются мгновенно:

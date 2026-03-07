@@ -28,6 +28,7 @@ builder.Services.AddSignalR();
 
 // MCP Server (Streamable HTTP transport)
 builder.Services.AddMcpServer()
+    .WithHttpTransport()
     .WithTools<GameTools>();
 
 // CORS — allow the HTML frontend (dev)
