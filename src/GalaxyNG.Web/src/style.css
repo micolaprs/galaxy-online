@@ -435,11 +435,9 @@ input:focus { outline: none; border-color: var(--accent); }
 .ph-player-list { flex: 1; overflow-y: auto; }
 .ph-player {
   border-bottom: 1px solid var(--border);
-  cursor: pointer; transition: background .1s;
 }
-.ph-player:hover { background: rgba(255,255,255,.04); }
-.ph-player.eliminated { opacity: .4; cursor: default; }
-.ph-player.eliminated:hover { background: none; }
+.ph-player.eliminated { opacity: .4; }
+.ph-player.eliminated .ph-player-row { cursor: default; pointer-events: none; }
 .ph-dot {
   width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0;
   background: var(--dot, #888);
@@ -541,7 +539,9 @@ input:focus { outline: none; border-color: var(--accent); }
 /* ---- Bot thinking block ---- */
 .ph-player-row {
   display: flex; align-items: center; gap: 6px;
-  padding: 8px 12px; cursor: pointer;
+  padding: 8px 12px; cursor: pointer; transition: background .1s;
+}
+.ph-player-row:hover { background: rgba(255,255,255,.04);
 }
 .ph-thinking {
   border-top: 1px solid var(--border);

@@ -103,9 +103,9 @@ export class PlayerHistoryPanel {
       <div class="ph-player-list">${colorDots}</div>
     `;
 
-    this.el.querySelectorAll<HTMLElement>('.ph-player').forEach(row => {
+    this.el.querySelectorAll<HTMLElement>('.ph-player-row').forEach(row => {
       row.addEventListener('click', () => {
-        const race = row.dataset['race']!;
+        const race = row.closest<HTMLElement>('.ph-player')!.dataset['race']!;
         void this.selectPlayer(race);
       });
     });
