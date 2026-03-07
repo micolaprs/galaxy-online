@@ -229,20 +229,36 @@ export class PlayerHistoryPanel {
       ? events.map(e => `<div class="ph-event">${esc(e)}</div>`).join('')
       : '<div class="ph-event muted">Мирный ход</div>';
 
+    // Parse reasoning + orders from either saved history or live LLM response
+    const reasoning = d.reasoning || '';
+    const orderLines = (d.orders || '').split('\n')
+      .map(l => l.trim()).filter(Boolean);
+    const ordersHtml = orderLines.length
+      ? orderLines.map(l => `<div class="ph-order-line">${esc(l)}</div>`).join('')
+      : '<div class="ph-event muted">(нет приказов)</div>';
+
+    const reasoningHtml = reasoning
+      ? `<details class="ph-reasoning" open>
+           <summary class="ph-reasoning-toggle">💭 Размышления бота</summary>
+           <pre class="ph-reasoning-text">${esc(reasoning)}</pre>
+         </details>`
+      : '';
+
     content.innerHTML = `
       <div class="ph-turn-back">
         <button class="ph-back" id="ph-back-turns">← Ходы</button>
         <span class="ph-heading">Ход ${d.turn} — ${esc(d.race)}</span>
       </div>
       <div class="ph-detail-scroll">
-        <div class="ph-section-title">Аналитика</div>
+        <div class="ph-section-title">События хода</div>
+        <div class="ph-events">${eventsHtml}</div>
+        <div class="ph-section-title">Отданные команды</div>
+        <div class="ph-orders-list">${ordersHtml}</div>
+        ${reasoningHtml}
+        <div class="ph-section-title">ИИ-анализ</div>
         <div class="ph-summary-wrap" id="ph-summary-wrap">
           ${summarySection}
         </div>
-        <div class="ph-section-title">События хода</div>
-        <div class="ph-events">${eventsHtml}</div>
-        <div class="ph-section-title">Приказы игрока</div>
-        <pre class="ph-orders">${esc(d.orders || '(нет приказов)')}</pre>
       </div>
     `;
 

@@ -558,3 +558,28 @@ input:focus { outline: none; border-color: var(--accent); }
   white-space: pre-wrap; word-break: break-word;
   max-height: 300px; overflow-y: auto;
 }
+
+/* ---- Turn detail: orders list + reasoning ---- */
+.ph-orders-list { padding: 6px 0; }
+.ph-order-line {
+  padding: 3px 14px; font-size: 11px; font-family: monospace;
+  color: #e2e8f0; border-bottom: 1px solid rgba(255,255,255,.04);
+}
+.ph-order-line:last-child { border-bottom: none; }
+
+.ph-reasoning {
+  margin: 0; border-top: 1px solid var(--border);
+}
+.ph-reasoning-toggle {
+  padding: 8px 14px; font-size: 11px; color: var(--accent);
+  cursor: pointer; list-style: none; user-select: none;
+  display: flex; align-items: center; gap: 6px;
+}
+.ph-reasoning-toggle:hover { background: rgba(255,255,255,.03); }
+.ph-reasoning-text {
+  margin: 0; padding: 10px 14px 12px;
+  font-size: 10px; line-height: 1.6; color: #94a3b8;
+  white-space: pre-wrap; word-break: break-word;
+  max-height: 400px; overflow-y: auto;
+  background: rgba(0,0,0,.3); border-top: 1px solid var(--border);
+}

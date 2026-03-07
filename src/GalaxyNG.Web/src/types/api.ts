@@ -105,7 +105,7 @@ export interface TurnHistoryEntry {
 
 // Player's orders for a turn
 export interface TurnPlayerOrders {
-  turn: number; race: string; orders: string;
+  turn: number; race: string; orders: string; reasoning: string;
   battles: string[]; bombings: string[];
 }
 

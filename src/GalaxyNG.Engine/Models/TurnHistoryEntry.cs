@@ -8,6 +8,9 @@ public sealed class TurnHistoryEntry
     /// <summary>Raw order text per player: raceName → ordersText.</summary>
     public Dictionary<string, string> PlayerOrders { get; set; } = [];
 
+    /// <summary>LLM reasoning text per bot player: raceName → reasoningText.</summary>
+    public Dictionary<string, string> PlayerReasoning { get; set; } = [];
+
     /// <summary>Human-readable battle descriptions.</summary>
     public List<string> Battles  { get; set; } = [];
 

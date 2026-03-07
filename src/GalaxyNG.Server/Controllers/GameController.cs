@@ -204,12 +204,14 @@ public sealed class GameController(GameService svc) : ControllerBase
         if (hist is null) return NotFound();
 
         hist.PlayerOrders.TryGetValue(race, out var orders);
+        hist.PlayerReasoning.TryGetValue(race, out var reasoning);
         return Ok(new
         {
             turn, race,
-            orders   = orders ?? "",
-            battles  = hist.Battles,
-            bombings = hist.Bombings,
+            orders    = orders    ?? "",
+            reasoning = reasoning ?? "",
+            battles   = hist.Battles,
+            bombings  = hist.Bombings,
         });
     }
 

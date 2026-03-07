@@ -159,7 +159,7 @@ public sealed class GameService(
             var game = _cache.GetValueOrDefault(gameId) ?? await store.LoadAsync(gameId, ct);
             if (game is null) return (false, "Game not found.");
 
-            // Capture orders BEFORE the turn processor clears them
+            // Capture orders + reasoning BEFORE the turn processor clears them
             var histEntry = new TurnHistoryEntry
             {
                 Turn = game.Turn,
@@ -167,7 +167,9 @@ public sealed class GameService(
                 PlayerOrders = game.Players.Values
                     .Where(p => !string.IsNullOrEmpty(p.PendingOrders))
                     .ToDictionary(p => p.Name, p => p.PendingOrders!),
+                PlayerReasoning = new Dictionary<string, string>(game.CurrentTurnReasoning),
             };
+            game.CurrentTurnReasoning.Clear();
 
             processor.RunTurn(game);
             game.LastTurnRunAt = DateTime.UtcNow;
@@ -234,6 +236,14 @@ public sealed class GameService(
     {
         logger.LogInformation("Bot {Race} status: {Status}{Detail}",
             raceName, status, detail is not null ? $" — {detail}" : "");
+
+        // Persist reasoning so it survives beyond the SignalR event lifetime
+        if (thinking is not null)
+        {
+            var game = await GetGameAsync(gameId, ct);
+            if (game is not null)
+                game.CurrentTurnReasoning[raceName] = thinking;
+        }
 
         await hub.Clients.Group(gameId).SendAsync("BotStatusUpdate", new
         {
