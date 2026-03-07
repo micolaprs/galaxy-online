@@ -12,6 +12,8 @@ export interface ThreePlanet {
 }
 
 export interface ThreeFleetRoute {
+  ownerId?: string;
+  ownerName?: string;
   origin: string;
   destination: string;
   x1: number;
@@ -103,6 +105,7 @@ export class GalaxyMapThree {
 
   /** Called when user clicks a planet. */
   onPlanetClick?: (name: string, screenX: number, screenY: number) => void;
+  onFleetClick?: (route: ThreeFleetRoute, screenX: number, screenY: number) => void;
   onMapClick?: () => void;
 
   constructor(private container: HTMLElement) {
@@ -343,6 +346,7 @@ export class GalaxyMapThree {
         opacity: 0.32,
       });
       const baseLine = new THREE.Line(baseGeometry, baseMaterial);
+      baseLine.userData['fleetRoute'] = route;
       this.scene.add(baseLine);
       this.cleanupMeshes.push(baseLine);
 
@@ -359,6 +363,7 @@ export class GalaxyMapThree {
         side: THREE.DoubleSide,
       });
       const glowBand = new THREE.Mesh(bandGeo, bandMat);
+      glowBand.userData['fleetRoute'] = route;
       glowBand.position.set(routeMid.x, routeMid.y, 0.03);
       glowBand.rotation.z = Math.atan2(dir.y, dir.x);
       this.scene.add(glowBand);
@@ -377,6 +382,7 @@ export class GalaxyMapThree {
         depthWrite: false,
       });
       const laneDots = new THREE.Points(laneGeometry, laneMaterial);
+      laneDots.userData['fleetRoute'] = route;
       laneDots.position.z = 0.08;
       this.scene.add(laneDots);
       this.cleanupMeshes.push(laneDots);
@@ -392,6 +398,7 @@ export class GalaxyMapThree {
           depthWrite: false,
         });
         const runner = new THREE.Mesh(runnerGeo, runnerMat);
+        runner.userData['fleetRoute'] = route;
         runner.position.copy(start);
         runner.position.z = 0.14;
         runner.rotation.z = Math.atan2(dir.y, dir.x) - Math.PI / 2;
@@ -596,17 +603,30 @@ export class GalaxyMapThree {
 
     this.raycaster.setFromCamera(this.pointer, this.camera);
 
-    // Only test planet meshes (skip dots/rings)
-    const targets = this.planetVisuals.map(visual => visual.mesh);
-    const hits    = this.raycaster.intersectObjects(targets);
-
-    if (hits.length > 0) {
-      const name = hits[0].object.userData['planet'] as string;
+    // Prefer planets over fleet visuals
+    const planetTargets = this.planetVisuals.map(visual => visual.mesh);
+    const planetHits    = this.raycaster.intersectObjects(planetTargets);
+    if (planetHits.length > 0) {
+      const name = planetHits[0].object.userData['planet'] as string;
       this.selectedName = name;
       this.updateSelectionRing();
-      this.spawnClickPulse(hits[0].point.x, hits[0].point.y);
+      this.spawnClickPulse(planetHits[0].point.x, planetHits[0].point.y);
       this.render();
       this.onPlanetClick?.(name, e.clientX, e.clientY);
+      return;
+    }
+
+    const fleetTargets: THREE.Object3D[] = [];
+    for (const rv of this.routeVisuals) {
+      fleetTargets.push(rv.glowBand, rv.baseLine, rv.laneDots, ...rv.runners);
+    }
+    this.raycaster.params.Line!.threshold = 1.2;
+    this.raycaster.params.Points!.threshold = 1.2;
+    const fleetHits = this.raycaster.intersectObjects(fleetTargets, true);
+    const fleetRoute = fleetHits.find(h => h.object.userData['fleetRoute'])?.object.userData['fleetRoute'] as ThreeFleetRoute | undefined;
+    if (fleetRoute) {
+      this.spawnClickPulse(fleetHits[0]!.point.x, fleetHits[0]!.point.y);
+      this.onFleetClick?.(fleetRoute, e.clientX, e.clientY);
     }
   }
 

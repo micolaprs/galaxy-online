@@ -50,6 +50,11 @@ export interface SpectateData {
   id: string;
   name: string;
   turn: number;
+  maxTurns?: number;
+  isFinished?: boolean;
+  winnerPlayerId?: string | null;
+  winnerName?: string | null;
+  finishReason?: string | null;
   galaxySize: number;
   lastTurnRunAt: string | null;
   autoRunOnAllSubmitted: boolean;

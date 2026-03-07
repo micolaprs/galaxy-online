@@ -40,6 +40,7 @@ public sealed class GameService(
         IReadOnlyList<(string name, string password, bool isBot)> players,
         GalaxyGeneratorOptions? opts  = null,
         bool autoRun = false,
+        int maxTurns = 9999,
         CancellationToken ct = default)
     {
         string gameId = Guid.NewGuid().ToString("N")[..8].ToUpperInvariant();
@@ -50,6 +51,7 @@ public sealed class GameService(
         var game = generator.Generate(gameId, gameName, playerSpecs, opts);
         game.AutoRunOnAllSubmitted = autoRun;
         game.HostPlayerId          = playerSpecs[0].id;
+        game.MaxTurns              = maxTurns;
 
         await _lock.WaitAsync(ct);
         try
@@ -110,6 +112,7 @@ public sealed class GameService(
     {
         var game = await GetGameAsync(gameId, ct);
         if (game is null) return (false, "Game not found.");
+        if (game.IsFinished) return (false, "Game already finished.");
 
         var player = game.GetPlayer(raceName);
         if (player is null || player.Password != password) return (false, "Auth failed.");
@@ -158,6 +161,7 @@ public sealed class GameService(
         {
             var game = _cache.GetValueOrDefault(gameId) ?? await store.LoadAsync(gameId, ct);
             if (game is null) return (false, "Game not found.");
+            if (game.IsFinished) return (false, "Game already finished.");
 
             // Capture orders + reasoning BEFORE the turn processor clears them
             var histEntry = new TurnHistoryEntry
@@ -173,6 +177,7 @@ public sealed class GameService(
 
             processor.RunTurn(game);
             game.LastTurnRunAt = DateTime.UtcNow;
+            FinalizeGameIfNeeded(game);
 
             // Capture results AFTER the turn
             histEntry.Battles  = game.Battles
@@ -189,6 +194,17 @@ public sealed class GameService(
 
             await hub.Clients.Group(gameId)
                 .SendAsync("TurnComplete", new { turn = game.Turn }, ct);
+            if (game.IsFinished)
+            {
+                await hub.Clients.Group(gameId)
+                    .SendAsync("GameFinished", new
+                    {
+                        winnerPlayerId = game.WinnerPlayerId,
+                        winnerName = game.WinnerName,
+                        reason = game.FinishReason,
+                        turn = game.Turn,
+                    }, ct);
+            }
 
             return (true, null);
         }
@@ -300,5 +316,45 @@ public sealed class GameService(
         // Use JSON round-trip for a simple deep clone
         var json = System.Text.Json.JsonSerializer.Serialize(original);
         return System.Text.Json.JsonSerializer.Deserialize<Game>(json)!;
+    }
+
+    private static void FinalizeGameIfNeeded(Game game)
+    {
+        if (game.IsFinished)
+            return;
+
+        var active = game.Players.Values.Where(p => !p.IsEliminated).ToList();
+        if (active.Count == 1)
+        {
+            var winner = active[0];
+            game.IsFinished = true;
+            game.WinnerPlayerId = winner.Id;
+            game.WinnerName = winner.Name;
+            game.FinishReason = "Осталась одна активная раса.";
+            game.AutoRunOnAllSubmitted = false;
+            return;
+        }
+
+        if (game.Turn < game.MaxTurns)
+            return;
+
+        var scored = game.Players.Values
+            .Select(p => new
+            {
+                Player = p,
+                Score = game.PlanetsOwnedBy(p.Id).Sum(pl => pl.Production) * 8
+                      + game.PlanetsOwnedBy(p.Id).Count() * 120
+                      + p.Groups.Sum(g => g.Ships) * 3
+                      + (p.Tech.Drive + p.Tech.Weapons + p.Tech.Shields + p.Tech.Cargo) * 55,
+            })
+            .OrderByDescending(x => x.Score)
+            .ToList();
+
+        var winnerByScore = scored.First().Player;
+        game.IsFinished = true;
+        game.WinnerPlayerId = winnerByScore.Id;
+        game.WinnerName = winnerByScore.Name;
+        game.FinishReason = $"Достигнут лимит {game.MaxTurns} ходов, победитель выбран по суммарному рейтингу.";
+        game.AutoRunOnAllSubmitted = false;
     }
 }

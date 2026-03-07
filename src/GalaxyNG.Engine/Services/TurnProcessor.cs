@@ -135,6 +135,9 @@ public sealed class TurnProcessor(
                 case OrderKind.SendMessage when order.Args.Length >= 1:
                     SaveDiplomacyMessage(game, player, order.Args);
                     break;
+                case OrderKind.Quit when order.Args.Length >= 1:
+                    ApplyQuit(player, game, order.Args[0]);
+                    break;
             }
         }
     }
@@ -260,6 +263,34 @@ public sealed class TurnProcessor(
     {
         var normalized = token.Trim().ToUpperInvariant();
         return normalized is "*" or "ALL" or "GALAXY" or "EVERYONE";
+    }
+
+    private static void ApplyQuit(Player player, Game game, string targetToken)
+    {
+        if (player.IsEliminated)
+            return;
+
+        var target = game.GetPlayer(targetToken);
+        if (target is not null && target.Id != player.Id && !target.IsEliminated)
+        {
+            foreach (var planet in game.PlanetsOwnedBy(player.Id))
+                planet.OwnerId = target.Id;
+
+            foreach (var group in player.Groups)
+                target.Groups.Add(group);
+            player.Groups.Clear();
+
+            player.Allies.Add(target.Id);
+            target.Allies.Add(player.Id);
+        }
+        else
+        {
+            foreach (var planet in game.PlanetsOwnedBy(player.Id))
+                planet.OwnerId = null;
+            player.Groups.Clear();
+        }
+
+        player.IsEliminated = true;
     }
 
     private static void ApplyDiplomacyOrders(Player player, Game game)

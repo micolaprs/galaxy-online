@@ -17,10 +17,13 @@ public sealed class BotAgent(
     IHttpClientFactory       httpFactory,
     ILogger<BotAgent>        logger)
 {
-    private readonly CommanderPersona _commander = CommanderPersona.ForRace(config.RaceName);
+    private CommanderProfile? _commander;
+    private readonly List<DiplomaticMemoryEntry> _myDiplomaticHistory = [];
+    private bool _retired;
 
     public async Task RunTurnAsync(int turn, CancellationToken ct = default)
     {
+        await EnsureCommanderProfileAsync(ct);
         logger.LogInformation("━━━ [{Race}] Начинаю ход {Turn} ━━━", config.RaceName, turn);
 
         // 1. Get turn report
@@ -35,12 +38,27 @@ public sealed class BotAgent(
         }
         int reportLines = report.Split('\n').Length;
         logger.LogInformation("📋 [{Race}] Отчёт получен ({Lines} строк)", config.RaceName, reportLines);
+        await RefreshMyDiplomaticHistoryAsync(ct);
+
+        var checkpoint = await EvaluateCheckpointDecisionAsync(turn, report, ct);
+        if (checkpoint.ShouldSurrender)
+        {
+            var surrenderOrders = BuildSurrenderOrders(checkpoint);
+            await PostBotStatusAsync("submitting", $"ход {turn}, решение: капитуляция", ct);
+            logger.LogInformation("🏳️ [{Race}] Принял решение о капитуляции на ходу {Turn}", config.RaceName, turn);
+            await SubmitOrdersAsync(surrenderOrders, final: true, ct);
+            await PostBotStatusAsync("submitted", $"ход {turn} (капитуляция)", ct);
+            _retired = true;
+            return;
+        }
 
         if (turn <= 3)
         {
             var openingOrders = await BuildOpeningOrdersAsync(turn, report, ct);
             if (!string.IsNullOrWhiteSpace(openingOrders))
             {
+                if (!string.IsNullOrWhiteSpace(checkpoint.ContinueMessage))
+                    openingOrders = AppendGlobalMessage(openingOrders, checkpoint.ContinueMessage);
                 logger.LogInformation("🧭 [{Race}] Использую детерминированный opening на ходу {Turn}", config.RaceName, turn);
                 await PostBotStatusAsync("validating", $"ход {turn}, opening-script", ct);
 
@@ -102,6 +120,8 @@ public sealed class BotAgent(
             await PostBotStatusAsync("thinking", $"ход {turn}, попытка {attempt}/3 — ответ получен", raw, ct);
 
             orders = NormalizeOrders(ExtractOrders(raw));
+            if (!string.IsNullOrWhiteSpace(checkpoint.ContinueMessage))
+                orders = AppendGlobalMessage(orders, checkpoint.ContinueMessage);
             int orderLines = orders.Split('\n', StringSplitOptions.RemoveEmptyEntries).Length;
             logger.LogInformation("📝 [{Race}] LLM составил {Lines} приказов (из {Total} знаков ответа)",
                 config.RaceName, orderLines, raw.Length);
@@ -153,19 +173,33 @@ public sealed class BotAgent(
 
         while (!ct.IsCancellationRequested)
         {
+            if (_retired)
+            {
+                await PostBotStatusAsync("idle", "раса капитулировала", ct);
+                break;
+            }
             try
             {
-                int turn = await GetCurrentTurnAsync(ct);
-                if (turn != lastTurn)
+                var state = await GetCurrentTurnAsync(ct);
+                if (state.IsFinished)
                 {
-                    logger.LogInformation("🔔 [{Race}] Новый ход: {Turn}", config.RaceName, turn);
-                    lastTurn = turn;
-                    await RunTurnAsync(turn, ct);
+                    var detail = !string.IsNullOrWhiteSpace(state.WinnerName)
+                        ? $"игра завершена, победитель: {state.WinnerName}"
+                        : "игра завершена";
+                    await PostBotStatusAsync("idle", detail, ct);
+                    logger.LogInformation("🏁 [{Race}] Игра завершена. {Detail}", config.RaceName, detail);
+                    break;
+                }
+                if (state.Turn != lastTurn)
+                {
+                    logger.LogInformation("🔔 [{Race}] Новый ход: {Turn}", config.RaceName, state.Turn);
+                    lastTurn = state.Turn;
+                    await RunTurnAsync(state.Turn, ct);
                 }
                 else
                 {
-                    await PostBotStatusAsync("waiting", $"ожидаю хода {turn + 1}", ct);
-                    logger.LogDebug("[{Race}] Жду следующего хода (сейчас ход {Turn})", config.RaceName, turn);
+                    await PostBotStatusAsync("waiting", $"ожидаю хода {state.Turn + 1}", ct);
+                    logger.LogDebug("[{Race}] Жду следующего хода (сейчас ход {Turn})", config.RaceName, state.Turn);
                 }
                 await Task.Delay(TimeSpan.FromSeconds(5), ct);
             }
@@ -213,11 +247,16 @@ public sealed class BotAgent(
         }
     }
 
-    private async Task<int> GetCurrentTurnAsync(CancellationToken ct)
+    private async Task<GameStateSnapshot> GetCurrentTurnAsync(CancellationToken ct)
     {
         var url  = $"{config.ServerUrl}/api/games/{config.GameId}";
         var json = await Http.GetFromJsonAsync<JsonElement>(url, ct);
-        return json.GetProperty("turn").GetInt32();
+        return new GameStateSnapshot(
+            Turn: json.GetProperty("turn").GetInt32(),
+            IsFinished: json.TryGetProperty("isFinished", out var finished) && finished.GetBoolean(),
+            WinnerName: json.TryGetProperty("winnerName", out var winner) && winner.ValueKind == JsonValueKind.String
+                ? winner.GetString()
+                : null);
     }
 
     private async Task PostBotStatusAsync(string status, string? detail, CancellationToken ct)
@@ -249,18 +288,21 @@ public sealed class BotAgent(
 
         foreach (var line in lines)
         {
-            if (line.StartsWith("ORDERS:", StringComparison.OrdinalIgnoreCase))
+            if (line.Trim().StartsWith("ORDERS:", StringComparison.OrdinalIgnoreCase))
             {
                 inOrders = true;
                 continue;
             }
             if (inOrders)
+            {
+                var trimmed = line.Trim();
+                if (trimmed.StartsWith("```"))
+                    continue;
                 result.Add(line);
+            }
         }
 
-        return result.Count > 0
-            ? string.Join("\n", result).Trim()
-            : llmResponse.Trim();  // fallback: use raw response
+        return result.Count > 0 ? string.Join("\n", result).Trim() : "";
     }
 
     private static string NormalizeOrders(string rawOrders)
@@ -269,15 +311,64 @@ public sealed class BotAgent(
         if (string.IsNullOrWhiteSpace(text))
             return "";
 
-        // Recover compact outputs where commands were glued together, e.g. "...transportp P1..."
-        text = Regex.Replace(text, @"(?<=[0-9A-Za-z])(?=[cyn=qnprvmdtesilugbxhjawfo]\s)", "\n");
+        var normalized = new List<string>();
+        var rawLines = text.Split('\n', StringSplitOptions.RemoveEmptyEntries);
+        bool inMessage = false;
 
-        var lines = text.Split('\n', StringSplitOptions.RemoveEmptyEntries)
-            .Select(l => l.Split(';')[0].Trim()) // comments are optional; strip to avoid parser ambiguity
-            .Where(l => !string.IsNullOrWhiteSpace(l))
-            .Select(NormalizeCompactDesignOrder);
+        foreach (var raw in rawLines)
+        {
+            var line = raw.Split(';')[0].Trim();
+            if (string.IsNullOrWhiteSpace(line))
+                continue;
 
-        return string.Join("\n", lines).Trim();
+            if (line.StartsWith("@"))
+            {
+                normalized.Add(line);
+                inMessage = !inMessage;
+                continue;
+            }
+
+            if (inMessage)
+            {
+                normalized.Add(line);
+                continue;
+            }
+
+            // Recover glued commands safely for non-message lines, e.g. "u2p P1 Haulerp P2 MAT"
+            var expanded = Regex.Replace(
+                line,
+                @"(?<=[A-Za-z0-9])(?=[cyn=qnprvmdtesilugbxhjawfo@](?:\d|\s))",
+                "\n");
+
+            foreach (var chunk in expanded.Split('\n', StringSplitOptions.RemoveEmptyEntries))
+            {
+                var cmdLine = NormalizeCompactDesignOrder(NormalizeCompactGroupCommand(chunk.Trim()));
+                if (IsLikelyOrderLine(cmdLine))
+                    normalized.Add(cmdLine);
+            }
+        }
+
+        return string.Join("\n", normalized).Trim();
+    }
+
+    private static bool IsLikelyOrderLine(string line)
+    {
+        if (string.IsNullOrWhiteSpace(line))
+            return false;
+        var c = char.ToLowerInvariant(line.TrimStart()[0]);
+        return "cyn=qnprvmdtesilugbxhjawfo@".Contains(c);
+    }
+
+    private static string NormalizeCompactGroupCommand(string line)
+    {
+        // Convert compact group commands like "l2 COL" => "l 2 COL"
+        var m = Regex.Match(line, @"^(?<cmd>[silugbxh])(?<num>\d+)(?<tail>\s+.*)?$", RegexOptions.IgnoreCase);
+        if (!m.Success)
+            return line;
+        var cmd = m.Groups["cmd"].Value;
+        var num = m.Groups["num"].Value;
+        var tail = m.Groups["tail"].Success ? m.Groups["tail"].Value : "";
+        return $"{cmd} {num}{tail}";
     }
 
     private static string NormalizeCompactDesignOrder(string line)
@@ -314,7 +405,7 @@ public sealed class BotAgent(
             return false;
         }
 
-        if (parseErrors.Count >= parsed.Count)
+        if (parseErrors.Count > 0)
         {
             error = string.Join("; ", parseErrors.Take(3));
             return false;
@@ -348,7 +439,10 @@ public sealed class BotAgent(
         if (turn == 1)
         {
             lines.Add("@ ALL");
-            lines.Add(BuildOpeningGreeting());
+            lines.Add(await GenerateBroadcastMessageAsync(
+                "Это первое официальное приветствие вашей расы в новой партии. Коротко представь главнокомандующего и дипломатический стиль.",
+                turn,
+                ct));
             lines.Add("@");
         }
 
@@ -480,56 +574,318 @@ public sealed class BotAgent(
         return result;
     }
 
+    private async Task<CheckpointDecision> EvaluateCheckpointDecisionAsync(int turn, string report, CancellationToken ct)
+    {
+        if (turn < 30 || turn % 5 != 0)
+            return CheckpointDecision.None;
+
+        try
+        {
+            var spectateUrl = $"{config.ServerUrl}/api/games/{config.GameId}/spectate";
+            var spectate = await Http.GetFromJsonAsync<JsonElement>(spectateUrl, ct);
+            var players = spectate.GetProperty("players").EnumerateArray()
+                .Select(p => new PlayerCheckpointStat(
+                    Id: p.GetProperty("id").GetString() ?? "",
+                    Name: p.GetProperty("name").GetString() ?? "",
+                    PlanetCount: p.GetProperty("planetCount").GetInt32(),
+                    IsEliminated: p.GetProperty("isEliminated").GetBoolean(),
+                    TechPower:
+                        p.GetProperty("tech").GetProperty("drive").GetDouble()
+                      + p.GetProperty("tech").GetProperty("weapons").GetDouble()
+                      + p.GetProperty("tech").GetProperty("shields").GetDouble()
+                      + p.GetProperty("tech").GetProperty("cargo").GetDouble()))
+                .Where(p => !string.IsNullOrWhiteSpace(p.Id))
+                .ToList();
+
+            var me = players.FirstOrDefault(p => p.Name.Equals(config.RaceName, StringComparison.OrdinalIgnoreCase));
+            if (me is null)
+                return CheckpointDecision.None;
+
+            var active = players.Where(p => !p.IsEliminated).ToList();
+            if (active.Count <= 1)
+                return CheckpointDecision.None;
+
+            double Score(PlayerCheckpointStat p) => p.PlanetCount * 100 + p.TechPower * 25;
+
+            var leader = active.OrderByDescending(Score).First();
+            var myScore = Score(me);
+            var leaderScore = Math.Max(1.0, Score(leader));
+            var scoreRatio = myScore / leaderScore;
+
+            var allies = ParseAlliesFromReport(report);
+            var allyCandidate = active
+                .Where(p => allies.Contains(p.Name, StringComparer.OrdinalIgnoreCase) && p.Name != me.Name)
+                .OrderByDescending(Score)
+                .FirstOrDefault();
+
+            var shouldSurrender = me.PlanetCount <= 1 && scoreRatio < 0.45 && turn >= 30;
+            if (shouldSurrender)
+            {
+                var msg = await GenerateBroadcastMessageAsync(
+                    allyCandidate is null
+                        ? $"Ход {turn}. Вы проигрываете и должны объявить капитуляцию от имени расы {config.RaceName}."
+                        : $"Ход {turn}. Вы проигрываете и сдаётесь в пользу союзника {allyCandidate.Name}.",
+                    turn,
+                    ct);
+                return new CheckpointDecision(true, allyCandidate?.Name, msg);
+            }
+
+            var continueMsg = await GenerateBroadcastMessageAsync(
+                $"Ход {turn}. Вы решили продолжать игру. Сообщи в общий чат о текущем положении и намерении сражаться дальше.",
+                turn,
+                ct);
+            return new CheckpointDecision(false, null, continueMsg);
+        }
+        catch (Exception ex)
+        {
+            logger.LogDebug("Checkpoint decision failed: {Msg}", ex.Message);
+            return CheckpointDecision.None;
+        }
+    }
+
+    private static List<string> ParseAlliesFromReport(string report)
+    {
+        var allies = new List<string>();
+        var lines = report.ReplaceLineEndings("\n").Split('\n');
+        var inStatus = false;
+        foreach (var raw in lines)
+        {
+            var line = raw.Trim();
+            if (line.StartsWith("= STATUS OF PLAYERS", StringComparison.OrdinalIgnoreCase))
+            {
+                inStatus = true;
+                continue;
+            }
+
+            if (inStatus && line.StartsWith("="))
+                break;
+            if (!inStatus || line.Length == 0 || line.StartsWith("Race") || line.StartsWith("-"))
+                continue;
+
+            var m = Regex.Match(line, @"^(?<race>[^\[]+)\[ALLY\]");
+            if (m.Success)
+                allies.Add(m.Groups["race"].Value.Trim());
+        }
+
+        return allies;
+    }
+
+    private string BuildSurrenderOrders(CheckpointDecision checkpoint)
+    {
+        var lines = new List<string>
+        {
+            "o AUTOUNLOAD",
+            "@ ALL",
+            checkpoint.ContinueMessage,
+            "@",
+        };
+        RememberDiplomaticMessage(checkpoint.ContinueMessage, isSurrender: true);
+
+        if (!string.IsNullOrWhiteSpace(checkpoint.AllyName))
+            lines.Add($"a {checkpoint.AllyName}");
+        lines.Add($"q {checkpoint.AllyName ?? "RETIRE"}");
+        return string.Join('\n', lines);
+    }
+
+    private static string AppendGlobalMessage(string orders, string message)
+    {
+        if (string.IsNullOrWhiteSpace(message))
+            return orders;
+
+        var text = orders.Trim();
+        var payload = $"@ ALL\n{message}\n@";
+        if (text.Contains(payload, StringComparison.Ordinal))
+            return text;
+        return string.IsNullOrWhiteSpace(text) ? payload : $"{text}\n{payload}";
+    }
+
+    private async Task EnsureCommanderProfileAsync(CancellationToken ct)
+    {
+        if (_commander is not null)
+            return;
+
+        try
+        {
+            var response = await llm.CompleteAsync(
+            [
+                ChatMessage.System("""
+                    You generate a compact character profile for a space strategy commander.
+                    Return STRICT JSON with keys:
+                    commanderName, shortBackstory, coreTraits, diplomaticTone, signaturePhrase.
+                    Keep values short (1 sentence each; commanderName 2-4 words).
+                    """),
+                ChatMessage.User($"Race: {config.RaceName}. Create a distinct commander persona in Russian."),
+            ], ct);
+
+            var jsonText = TryExtractJsonObject(response);
+            if (!string.IsNullOrWhiteSpace(jsonText))
+            {
+                using var doc = JsonDocument.Parse(jsonText);
+                var root = doc.RootElement;
+                _commander = new CommanderProfile(
+                    CommanderName: ReadJson(root, "commanderName", $"Командор {config.RaceName}"),
+                    ShortBackstory: ReadJson(root, "shortBackstory", "Ветеран пограничных кампаний и стратег колониальных операций."),
+                    CoreTraits: ReadJson(root, "coreTraits", "прагматичный, дисциплинированный, хладнокровный"),
+                    DiplomaticTone: ReadJson(root, "diplomaticTone", "коротко, уважительно и по делу"),
+                    SignaturePhrase: ReadJson(root, "signaturePhrase", "Канал подтверждён.")
+                );
+            }
+        }
+        catch (Exception ex)
+        {
+            logger.LogDebug("Could not generate commander profile from LLM: {Msg}", ex.Message);
+        }
+
+        _commander ??= CommanderProfile.Fallback(config.RaceName);
+    }
+
+    private async Task RefreshMyDiplomaticHistoryAsync(CancellationToken ct)
+    {
+        try
+        {
+            var url = $"{config.ServerUrl}/api/games/{config.GameId}/spectate";
+            var spectate = await Http.GetFromJsonAsync<JsonElement>(url, ct);
+            if (!spectate.TryGetProperty("diplomacy", out var diplomacy))
+                return;
+
+            var entries = new List<DiplomaticMemoryEntry>();
+            if (diplomacy.TryGetProperty("globalMessages", out var globals))
+            {
+                foreach (var m in globals.EnumerateArray())
+                {
+                    var sender = m.TryGetProperty("senderName", out var sn) ? sn.GetString() ?? "" : "";
+                    if (!sender.Equals(config.RaceName, StringComparison.OrdinalIgnoreCase))
+                        continue;
+                    var text = m.TryGetProperty("text", out var t) ? t.GetString() ?? "" : "";
+                    var turn = m.TryGetProperty("turn", out var trn) ? trn.GetInt32() : 0;
+                    if (!string.IsNullOrWhiteSpace(text))
+                        entries.Add(new DiplomaticMemoryEntry(turn, text, false));
+                }
+            }
+
+            _myDiplomaticHistory.Clear();
+            _myDiplomaticHistory.AddRange(entries.OrderBy(e => e.Turn).TakeLast(20));
+        }
+        catch (Exception ex)
+        {
+            logger.LogDebug("Could not refresh diplomatic history: {Msg}", ex.Message);
+        }
+    }
+
+    private async Task<string> GenerateBroadcastMessageAsync(string intent, int turn, CancellationToken ct)
+    {
+        await EnsureCommanderProfileAsync(ct);
+        var profile = _commander!;
+        var history = _myDiplomaticHistory.Count == 0
+            ? "(нет прошлых сообщений)"
+            : string.Join("\n", _myDiplomaticHistory.TakeLast(8).Select(m => $"- Ход {m.Turn}: {m.Text}"));
+
+        var response = await llm.CompleteAsync(
+        [
+            ChatMessage.System($"""
+                Ты пишешь дипломатические сообщения ТОЛЬКО от имени главнокомандующего.
+                Персонаж:
+                - Имя: {profile.CommanderName}
+                - История: {profile.ShortBackstory}
+                - Характер: {profile.CoreTraits}
+                - Тон: {profile.DiplomaticTone}
+                - Фирменная фраза: {profile.SignaturePhrase}
+                Пиши коротко (1 предложение, максимум 140 символов), без markdown, без списка приказов и без символа ';'.
+                """),
+            ChatMessage.User($"""
+                Ход: {turn}
+                История прошлых сообщений этой расы:
+                {history}
+
+                Задача:
+                {intent}
+                """),
+        ], ct);
+
+        var message = response.ReplaceLineEndings(" ").Trim();
+        if (string.IsNullOrWhiteSpace(message))
+            message = $"{profile.SignaturePhrase} Раса {config.RaceName} продолжает текущий курс.";
+        message = message.Replace(';', ',');
+        if (message.Length > 160)
+        {
+            message = message[..160];
+            var cut = message.LastIndexOf(' ');
+            if (cut > 80) message = message[..cut];
+            message = message.TrimEnd(',', '.', ' ') + ".";
+        }
+
+        RememberDiplomaticMessage(message, isSurrender: false, turn);
+        return message;
+    }
+
+    private void RememberDiplomaticMessage(string text, bool isSurrender, int turn = 0)
+    {
+        var effectiveTurn = turn > 0 ? turn : (_myDiplomaticHistory.LastOrDefault()?.Turn ?? 0);
+        _myDiplomaticHistory.Add(new DiplomaticMemoryEntry(effectiveTurn, text, isSurrender));
+        if (_myDiplomaticHistory.Count > 30)
+            _myDiplomaticHistory.RemoveRange(0, _myDiplomaticHistory.Count - 30);
+    }
+
+    private static string? TryExtractJsonObject(string text)
+    {
+        var start = text.IndexOf('{');
+        var end = text.LastIndexOf('}');
+        if (start < 0 || end <= start)
+            return null;
+        return text[start..(end + 1)];
+    }
+
+    private static string ReadJson(JsonElement root, string key, string fallback)
+    {
+        return root.TryGetProperty(key, out var prop) && prop.ValueKind == JsonValueKind.String
+            ? (prop.GetString() ?? fallback)
+            : fallback;
+    }
+
     private sealed record PlanetSnapshot(string Name, double X, double Y, string? OwnerId);
+    private sealed record PlayerCheckpointStat(string Id, string Name, int PlanetCount, bool IsEliminated, double TechPower);
+    private sealed record GameStateSnapshot(int Turn, bool IsFinished, string? WinnerName);
+    private sealed record CheckpointDecision(bool ShouldSurrender, string? AllyName, string ContinueMessage)
+    {
+        public static CheckpointDecision None => new(false, null, "");
+    }
 
     private string BuildCommanderInstruction()
     {
-        return $"You are Supreme Commander {_commander.Name} of race {config.RaceName}. " +
-               $"Leadership profile: {_commander.Profile}. " +
-               $"Diplomatic style: {_commander.DiplomacyTone}. " +
+        var profile = _commander ?? CommanderProfile.Fallback(config.RaceName);
+        var history = _myDiplomaticHistory.Count == 0
+            ? "none"
+            : string.Join(" | ", _myDiplomaticHistory.TakeLast(5).Select(m => $"T{m.Turn}:{m.Text}"));
+
+        return $"You are Supreme Commander {profile.CommanderName} of race {config.RaceName}. " +
+               $"Backstory: {profile.ShortBackstory}. " +
+               $"Leadership traits: {profile.CoreTraits}. " +
+               $"Diplomatic style: {profile.DiplomaticTone}. " +
+               $"Recent diplomacy messages sent by your race: {history}. " +
                "If you send diplomacy messages, keep this voice consistent and distinct.";
     }
 
-    private string BuildOpeningGreeting()
+    private sealed record CommanderProfile(
+        string CommanderName,
+        string ShortBackstory,
+        string CoreTraits,
+        string DiplomaticTone,
+        string SignaturePhrase)
     {
-        return $"{_commander.GreetingPrefix} Я {_commander.Name}, главнокомандующий расы {config.RaceName}. " +
-               $"{_commander.GreetingCore}";
-    }
-
-    private sealed record CommanderPersona(
-        string Name,
-        string Profile,
-        string DiplomacyTone,
-        string GreetingPrefix,
-        string GreetingCore)
-    {
-        private static readonly string[] Names =
-        [
-            "Архонт Велаар",
-            "Маршал Ивен Косс",
-            "Стратег Риан Тейл",
-            "Прим-командор Сайла Нор",
-            "Адмирал Корвин Дейр",
-            "Коммодор Лекса Вар",
-            "Доминус Харек Соль",
-            "Наварх Мирен Каэль",
-        ];
-
-        private static readonly (string profile, string diplomacy, string prefix, string core)[] Archetypes =
-        [
-            ("холодный аналитик, опирается на математику и контроль рисков", "коротко, формально, через расчёт", "Канал подтверждён.", "Предпочитаем чёткие договорённости и соблюдение границ."),
-            ("агрессивный экспансионист, любит инициативу и давление темпа", "резко и напористо, без долгих вступлений", "Эфир открыт.", "Мы растём быстро и ждём от соседей ясной позиции."),
-            ("дипломат-прагматик, строит коалиции ради выгоды", "дружелюбно и предметно, с акцентом на взаимную выгоду", "Связь установлена.", "Открыты к обмену данными и временным союзам."),
-            ("инженер-реформист, ценит технологическое превосходство", "спокойно, технично, с упором на развитие", "Линия чистая.", "Наша ставка на технологию и устойчивую логистику."),
-            ("осторожный защитник, приоритет безопасность ядра империи", "вежливо, но с заметной дистанцией", "Сигнал принят.", "Соблюдаем порядок и внимательно следим за военной активностью."),
-        ];
-
-        public static CommanderPersona ForRace(string raceName)
+        public static CommanderProfile Fallback(string raceName)
         {
-            var hash = Math.Abs(StringComparer.OrdinalIgnoreCase.GetHashCode(raceName));
-            var name = Names[hash % Names.Length];
-            var arc = Archetypes[hash % Archetypes.Length];
-            return new CommanderPersona(name, arc.profile, arc.diplomacy, arc.prefix, arc.core);
+            var idx = Math.Abs(StringComparer.OrdinalIgnoreCase.GetHashCode(raceName)) % 6;
+            return idx switch
+            {
+                0 => new CommanderProfile("Архонт Велаар", "Ветеран приграничных конфликтов и мастер оборонительных кампаний.", "осторожный, расчётливый, дисциплинированный", "сдержанный и прагматичный", "Канал подтверждён."),
+                1 => new CommanderProfile("Маршал Кайрос", "Бывший командир экспедиционных флотов дальнего рубежа.", "агрессивный, решительный, прямой", "жёсткий и напористый", "Эфир открыт."),
+                2 => new CommanderProfile("Коммодор Лекса Вар", "Инженер-стратег, построившая технократическую военную доктрину.", "техничный, спокойный, системный", "деловой и технический", "Линия чистая."),
+                3 => new CommanderProfile("Наварх Мирен Каэль", "Дипломат войны, умеющий превращать перемирия в выгоду.", "гибкий, дипломатичный, прагматичный", "вежливый и предметный", "Связь установлена."),
+                4 => new CommanderProfile("Адмирал Корвин Дейр", "Командовал флотом в затяжных войнах на истощение.", "стойкий, холодный, упорный", "короткий и сухой", "Сигнал принят."),
+                _ => new CommanderProfile("Доминус Харек Соль", "Выходец из колониальных ополчений, сторонник быстрых ударов.", "инициативный, резкий, амбициозный", "энергичный и уверенный", "Передача устойчива."),
+            };
         }
     }
+
+    private sealed record DiplomaticMemoryEntry(int Turn, string Text, bool IsSurrender);
 }

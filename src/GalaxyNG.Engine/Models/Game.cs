@@ -29,6 +29,11 @@ public sealed class Game
     // Config
     public bool   AutoRunOnAllSubmitted { get; set; } = false;
     public string HostPlayerId          { get; set; } = "";
+    public int    MaxTurns              { get; set; } = 9999;
+    public bool   IsFinished            { get; set; }
+    public string? WinnerPlayerId       { get; set; }
+    public string? WinnerName           { get; set; }
+    public string? FinishReason         { get; set; }
 
     public DateTime CreatedAt           { get; init; } = DateTime.UtcNow;
     public DateTime? LastTurnRunAt      { get; set; }

@@ -22,6 +22,7 @@ DO_CLEAN=false  # по умолчанию: возобновляем послед
 FORCE_NEW=false # --new: удалить старые и создать новую
 LLM_PROVIDER="${GALAXYNG_BOT_LLM_PROVIDER:-lmstudio}"
 PROVIDER_AUTH_DIR="${GALAXYNG_OPENAI_CODEX_AUTH_DIR:-}"
+MAX_TURNS="${GALAXYNG_DEMO_MAX_TURNS:-60}"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -35,6 +36,7 @@ while [[ $# -gt 0 ]]; do
     --openai-codex) LLM_PROVIDER="openai/codex"; shift ;;
     --provider)     LLM_PROVIDER="$2"; shift 2 ;;
     --auth-dir)     PROVIDER_AUTH_DIR="$2"; shift 2 ;;
+    --max-turns)    MAX_TURNS="$2"; shift 2 ;;
     -h|--help)
       echo "Использование: $0 [опции]"
       echo ""
@@ -51,10 +53,12 @@ while [[ $# -gt 0 ]]; do
       echo "  --openai-codex        Быстрый флаг: LLM-провайдер openai/codex"
       echo "  --provider NAME       LLM-провайдер: lmstudio | openai/codex"
       echo "  --auth-dir PATH       Путь к папке auth-файлов Codex (для openai/codex)"
+      echo "  --max-turns N         Лимит ходов игры (по умолчанию: 60)"
       echo ""
       echo "  Можно задавать через env:"
       echo "    GALAXYNG_BOT_LLM_PROVIDER=lmstudio|openai/codex"
       echo "    GALAXYNG_OPENAI_CODEX_AUTH_DIR=~/.codex"
+      echo "    GALAXYNG_DEMO_MAX_TURNS=60"
       echo ""
       echo "По умолчанию: убиваем старые процессы + возобновляем последнюю игру + открываем браузер."
       exit 0 ;;
@@ -353,8 +357,8 @@ if [[ -z "$GAME_ID" ]]; then
 
   RESPONSE=$(curl -sf -X POST "$SERVER_URL/api/games" \
     -H "Content-Type: application/json" \
-    -d "$(printf '{"name":"%s","players":%s,"galaxySize":%d,"autoRun":true}' \
-      "$GAME_NAME" "$PLAYERS_JSON" "$GALAXY_SIZE")")
+    -d "$(printf '{"name":"%s","players":%s,"galaxySize":%d,"autoRun":true,"maxTurns":%d}' \
+      "$GAME_NAME" "$PLAYERS_JSON" "$GALAXY_SIZE" "$MAX_TURNS")")
 
   GAME_ID=$(echo "$RESPONSE" | python3 -c "import sys,json; print(json.load(sys.stdin)['gameId'])")
   ok "Игра создана: $GAME_ID"

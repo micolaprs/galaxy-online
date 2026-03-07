@@ -45,6 +45,7 @@ export class WatchView {
   private diplomacyCollapsed = false;
   private showAllRoutes = true;
   private routeFocusPlanet: string | null = null;
+  private activeFleetRoute: ThreeFleetRoute | null = null;
 
   onBack?: () => void;
 
@@ -107,6 +108,7 @@ export class WatchView {
             <!-- Three.js canvas injected here -->
             <!-- Planet panel overlay -->
             <button class="wv-route-toggle" id="wv-route-toggle">Маршруты: все</button>
+            <div class="wv-fleet-panel hidden" id="wv-fleet-panel"></div>
             <div class="wv-dip-chat" id="wv-dip-chat">
               <button class="wv-dip-toggle" id="wv-dip-toggle">Дипломатия ▾</button>
               <div class="wv-dip-body" id="wv-dip-body">
@@ -168,13 +170,19 @@ export class WatchView {
       this.map.select(null);
       QuakeConsole.closeActive();
       this.planetPanel.hide();
+      this.hideFleetPanel();
       this.routeFocusPlanet = null;
       this.applyRouteDisplayMode();
     };
     this.map.onPlanetClick = (name) => {
       this.routeFocusPlanet = name;
       this.applyRouteDisplayMode();
+      this.hideFleetPanel();
       this.planetPanel.show(name);
+    };
+    this.map.onFleetClick = (route) => {
+      this.activeFleetRoute = route;
+      this.showFleetPanel(route);
     };
 
     this.el.querySelector('#btn-back')!.addEventListener('click', () => this.onBack?.());
@@ -265,6 +273,8 @@ export class WatchView {
         const to = planetByName.get(route.destination);
         if (!from || !to) return null;
         return {
+          ownerId: route.ownerId,
+          ownerName: data.players.find(p => p.id === route.ownerId)?.name ?? route.ownerId,
           origin: route.origin,
           destination: route.destination,
           x1: from.x,
@@ -381,6 +391,33 @@ export class WatchView {
     const btn = this.el.querySelector<HTMLElement>('#wv-route-toggle');
     if (!btn) return;
     btn.textContent = this.showAllRoutes ? 'Маршруты: все' : 'Маршруты: выбранные';
+  }
+
+  private showFleetPanel(route: ThreeFleetRoute): void {
+    const panel = this.el.querySelector<HTMLElement>('#wv-fleet-panel');
+    if (!panel) return;
+    const ownerColor = route.ownerId ? (this.playerColorMap.get(route.ownerId) ?? '#94a3b8') : '#94a3b8';
+    const status = route.active === false ? 'Завершённый маршрут' : 'В гиперпространстве';
+    panel.innerHTML = `
+      <div class="wv-fleet-head">
+        <span class="wv-fleet-dot" style="background:${ownerColor}"></span>
+        <span class="wv-fleet-title">${esc(route.fleetName ?? 'Флот')}</span>
+      </div>
+      <div class="wv-fleet-row"><span>Раса</span><strong>${esc(route.ownerName ?? '—')}</strong></div>
+      <div class="wv-fleet-row"><span>Кораблей</span><strong>${route.ships ?? 0}</strong></div>
+      <div class="wv-fleet-row"><span>Маршрут</span><strong>${esc(`${route.origin} → ${route.destination}`)}</strong></div>
+      <div class="wv-fleet-row"><span>Статус</span><strong>${esc(status)}</strong></div>
+      <div class="wv-fleet-hint">Клик в любое место карты закрывает это окно.</div>
+    `;
+    panel.classList.remove('hidden');
+  }
+
+  private hideFleetPanel(): void {
+    const panel = this.el.querySelector<HTMLElement>('#wv-fleet-panel');
+    if (!panel) return;
+    panel.classList.add('hidden');
+    panel.innerHTML = '';
+    this.activeFleetRoute = null;
   }
 }
 

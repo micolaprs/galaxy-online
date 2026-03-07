@@ -25,7 +25,7 @@ public sealed class GameController(GameService svc) : ControllerBase
         } : null;
 
         var players = req.Players.Select(p => (p.Name, p.Password, p.IsBot)).ToList();
-        var game = await svc.CreateGameAsync(req.Name, players, opts, req.AutoRun, ct);
+        var game = await svc.CreateGameAsync(req.Name, players, opts, req.AutoRun, req.MaxTurns ?? 9999, ct);
 
         var baseUrl = $"{Request.Scheme}://{Request.Host}";
         return Created($"{baseUrl}/api/games/{game.Id}", new
@@ -34,6 +34,7 @@ public sealed class GameController(GameService svc) : ControllerBase
             joinLink = $"{baseUrl}/?game={game.Id}",
             players  = game.Players.Values.Select(p => new { p.Id, p.Name, p.Password }),
             turn     = game.Turn,
+            maxTurns = game.MaxTurns,
         });
     }
 
@@ -55,6 +56,9 @@ public sealed class GameController(GameService svc) : ControllerBase
             g.Id, g.Name, g.Turn,
             playerCount = g.Players.Count,
             g.LastTurnRunAt,
+            g.MaxTurns,
+            g.IsFinished,
+            g.WinnerName,
         }));
     }
 
@@ -66,6 +70,7 @@ public sealed class GameController(GameService svc) : ControllerBase
         return game is null ? NotFound() : Ok(new
         {
             game.Id, game.Name, game.Turn, game.GalaxySize,
+            game.MaxTurns, game.IsFinished, game.WinnerPlayerId, game.WinnerName, game.FinishReason,
             players = game.Players.Values.Select(p => new
             {
                 p.Name, p.Tech, p.IsBot, p.IsEliminated, p.Submitted,
@@ -176,6 +181,7 @@ public sealed class GameController(GameService svc) : ControllerBase
         {
             game.Id, game.Name, game.Turn, game.GalaxySize,
             game.LastTurnRunAt, game.AutoRunOnAllSubmitted,
+            game.MaxTurns, game.IsFinished, game.WinnerPlayerId, game.WinnerName, game.FinishReason,
             players = playerInfos,
             planets = game.Planets.Values.Select(p => new
             {
@@ -445,7 +451,8 @@ public sealed record CreateGameRequest(
     double? GalaxySize   = null,
     double? MinDist      = null,
     int?    StuffPlanets = null,
-    bool    AutoRun      = false
+    bool    AutoRun      = false,
+    int?    MaxTurns     = null
 );
 
 public sealed record SubmitOrdersRequest(
