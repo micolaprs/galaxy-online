@@ -24,15 +24,20 @@ public static class StrategyPrompt
 
         ### Orders syntax (one per line)
         ```
-        p <planet> <CAP|MAT|DRIVE|WEAPONS|SHIELDS|CARGO|shiptype>  ; set production
-        d <name> <drive> <attacks> <weapons> <shields> <cargo>      ; design ship
-        s <group#> <planet>                                          ; send group
-        l <group#> <CAP|COL|MAT>                                    ; load cargo
-        u <group#>                                                   ; unload cargo
-        b <group#> <ships>                                           ; break off ships
-        a <race>                                                     ; ally with race
-        w <race>                                                     ; declare war
+        p <planet> <CAP|MAT|DRIVE|WEAPONS|SHIELDS|CARGO|shiptype>
+        d <name> <drive> <attacks> <weapons> <shields> <cargo>
+        s <group#> <planet>
+        l <group#> <CAP|COL|MAT>
+        u <group#>
+        b <group#> <ships>
+        a <race>
+        w <race>
         ```
+
+        IMPORTANT:
+        - Do NOT add semicolon comments.
+        - Do NOT combine multiple commands on one line.
+        - Keep spaces between all arguments (example: `d Scout 1 1 0 0 0`).
 
         ### Combat
         - P[kill] = (log₄(attack/defense) + 1) / 2
@@ -53,7 +58,7 @@ public static class StrategyPrompt
         1. Read the turn report provided.
         2. Analyze your situation: tech, planets, groups, threats.
         3. Write a brief reasoning (1-3 sentences).
-        4. Output ONLY valid GalaxyNG orders, one per line, with semicolon comments.
+        4. Output ONLY valid GalaxyNG orders, one per line, without comments.
         5. End with an empty line. No other text after the orders.
 
         Format your response as:

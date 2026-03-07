@@ -132,6 +132,9 @@ public sealed class TurnProcessor(
                 case OrderKind.SetRoute when order.Args.Length >= 2:
                     SetRoute(game, player, order.Args);
                     break;
+                case OrderKind.SendMessage when order.Args.Length >= 1:
+                    SaveDiplomacyMessage(game, player, order.Args);
+                    break;
             }
         }
     }
@@ -205,6 +208,58 @@ public sealed class TurnProcessor(
             case "AUTOUNLOAD":  player.AutoUnload  = enable; break;
             case "SORTGROUPS":  player.SortGroups  = enable; break;
         }
+    }
+
+    private static void SaveDiplomacyMessage(Game game, Player sender, string[] args)
+    {
+        var text = args[^1].Trim();
+        if (string.IsNullOrWhiteSpace(text))
+            return;
+
+        var recipients = ResolveRecipients(game, sender, args[..^1]);
+        var message = new DiplomacyMessage
+        {
+            Turn = game.Turn,
+            SentAt = DateTime.UtcNow,
+            SenderId = sender.Id,
+            SenderName = sender.Name,
+            RecipientIds = recipients,
+            Text = text,
+        };
+
+        game.DiplomacyMessages.Add(message);
+        const int maxMessages = 500;
+        if (game.DiplomacyMessages.Count > maxMessages)
+            game.DiplomacyMessages.RemoveRange(0, game.DiplomacyMessages.Count - maxMessages);
+    }
+
+    private static List<string> ResolveRecipients(Game game, Player sender, IReadOnlyList<string> targets)
+    {
+        if (targets.Count == 0)
+            return [];
+
+        if (targets.Any(IsGlobalTarget))
+            return [];
+
+        var recipientIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var target in targets)
+        {
+            foreach (var token in target.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+            {
+                var player = game.GetPlayer(token);
+                if (player is null || player.Id == sender.Id)
+                    continue;
+                recipientIds.Add(player.Id);
+            }
+        }
+
+        return [.. recipientIds];
+    }
+
+    private static bool IsGlobalTarget(string token)
+    {
+        var normalized = token.Trim().ToUpperInvariant();
+        return normalized is "*" or "ALL" or "GALAXY" or "EVERYONE";
     }
 
     private static void ApplyDiplomacyOrders(Player player, Game game)

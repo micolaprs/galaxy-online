@@ -23,6 +23,9 @@ public sealed class Game
     // AI-generated summaries, one per turn
     public List<AiSummaryEntry> AiSummaries { get; set; } = [];
 
+    // Diplomacy chat history (global + private)
+    public List<DiplomacyMessage> DiplomacyMessages { get; set; } = [];
+
     // Config
     public bool   AutoRunOnAllSubmitted { get; set; } = false;
     public string HostPlayerId          { get; set; } = "";

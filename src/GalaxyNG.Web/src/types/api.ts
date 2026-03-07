@@ -58,6 +58,31 @@ export interface SpectateData {
   battles: SpectateBattle[];
   bombings: SpectateBombing[];
   fleetRoutes: SpectateFleetRoute[];
+  diplomacy: SpectateDiplomacy;
+}
+
+export interface SpectateDiplomacy {
+  globalMessages: SpectateChatMessage[];
+  privateChats: SpectatePrivateChat[];
+}
+
+export interface SpectateChatMessage {
+  id: string;
+  turn: number;
+  sentAt: string;
+  senderId: string;
+  senderName: string;
+  text: string;
+}
+
+export interface SpectatePrivateChat {
+  channelId: string;
+  playerAId: string;
+  playerAName: string;
+  playerBId: string;
+  playerBName: string;
+  overlapPlanets: string[];
+  messages: SpectateChatMessage[];
 }
 export interface SpectatePlayer {
   id: string; name: string; isBot: boolean;

@@ -12,6 +12,8 @@ export interface ThreePlanet {
 }
 
 export interface ThreeFleetRoute {
+  origin: string;
+  destination: string;
   x1: number;
   y1: number;
   x2: number;
@@ -48,8 +50,10 @@ interface ClickPulse {
 }
 
 interface FleetRouteVisual {
+  route: ThreeFleetRoute;
   baseLine: THREE.Line;
   laneDots: THREE.Points;
+  runner: THREE.Mesh;
   start: THREE.Vector3;
   end: THREE.Vector3;
   speed: number;
@@ -69,6 +73,8 @@ export class GalaxyMapThree {
   private planets: ThreePlanet[] = [];
   private fleetRoutes: ThreeFleetRoute[] = [];
   private routeVisuals: FleetRouteVisual[] = [];
+  private showAllRoutes = false;
+  private routeFocusPlanet: string | null = null;
   private galaxySize = 200;
 
   // Selection ring
@@ -109,6 +115,14 @@ export class GalaxyMapThree {
     this.fleetRoutes = fleetRoutes;
     this.buildPlanetMeshes();
     this.fitToView();
+    this.updateRouteVisibility();
+    this.render();
+  }
+
+  setRouteDisplay(showAll: boolean, focusPlanet: string | null): void {
+    this.showAllRoutes = showAll;
+    this.routeFocusPlanet = focusPlanet;
+    this.updateRouteVisibility();
     this.render();
   }
 
@@ -346,9 +360,25 @@ export class GalaxyMapThree {
       this.scene.add(laneDots);
       this.cleanupMeshes.push(laneDots);
 
+      const runnerGeo = new THREE.SphereGeometry(0.26, 12, 12);
+      const runnerMat = new THREE.MeshBasicMaterial({
+        color: this.hexColor(route.color),
+        transparent: true,
+        opacity: 0.95,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+      });
+      const runner = new THREE.Mesh(runnerGeo, runnerMat);
+      runner.position.copy(start);
+      runner.position.z = 0.12;
+      this.scene.add(runner);
+      this.cleanupMeshes.push(runner);
+
       this.routeVisuals.push({
+        route,
         baseLine,
         laneDots,
+        runner,
         start,
         end,
         speed: 0.35 + Math.random() * 0.25,
@@ -604,13 +634,57 @@ export class GalaxyMapThree {
       const dx = to.x - from.x;
       const dy = to.y - from.y;
       const phase = (this.clock * route.speed) % 1;
+      const routeShown = this.shouldShowRoute(route.route);
 
       for (let i = 0; i < ROUTE_POINT_COUNT; i++) {
         const t = ((i / ROUTE_POINT_COUNT) + phase) % 1;
         attrs.setXYZ(i, from.x + dx * t, from.y + dy * t, 0.08);
       }
       attrs.needsUpdate = true;
+
+      const runnerT = phase;
+      route.runner.position.set(from.x + dx * runnerT, from.y + dy * runnerT, 0.12);
+      route.runner.visible = routeShown;
+
+      const baseMat = route.baseLine.material as THREE.LineBasicMaterial;
+      const laneMat = route.laneDots.material as THREE.PointsMaterial;
+      const runnerMat = route.runner.material as THREE.MeshBasicMaterial;
+      if (routeShown) {
+        const blink = (Math.sin(this.clock * 6 + route.speed * 11) + 1) / 2;
+        baseMat.opacity = 0.35 + blink * 0.55; // bright race-colored blinking route line
+        laneMat.opacity = 0.45 + blink * 0.5;
+        runnerMat.opacity = 0.55 + blink * 0.45;
+        route.runner.scale.setScalar(0.85 + blink * 0.55);
+      } else {
+        baseMat.opacity = 0;
+        laneMat.opacity = 0;
+        runnerMat.opacity = 0;
+      }
     }
+  }
+
+  private updateRouteVisibility(): void {
+    for (const route of this.routeVisuals) {
+      const shown = this.shouldShowRoute(route.route);
+      route.baseLine.visible = shown;
+      route.laneDots.visible = shown;
+      route.runner.visible = shown;
+
+      const baseMat = route.baseLine.material as THREE.LineBasicMaterial;
+      const laneMat = route.laneDots.material as THREE.PointsMaterial;
+      baseMat.opacity = shown ? 0.7 : 0;
+      laneMat.opacity = shown ? 0.9 : 0;
+      const runnerMat = route.runner.material as THREE.MeshBasicMaterial;
+      runnerMat.opacity = shown ? 0.95 : 0;
+    }
+  }
+
+  private shouldShowRoute(route: ThreeFleetRoute): boolean {
+    if (this.showAllRoutes)
+      return true;
+    if (!this.routeFocusPlanet)
+      return false;
+    return route.origin === this.routeFocusPlanet || route.destination === this.routeFocusPlanet;
   }
 
   private animateAsteroids(dt: number): void {

@@ -1,3 +1,4 @@
+using GalaxyNG.Engine.Models;
 using GalaxyNG.Engine.Services;
 using GalaxyNG.Server.Services;
 using Microsoft.AspNetCore.Mvc;
@@ -112,13 +113,12 @@ public sealed class GameController(GameService svc) : ControllerBase
         var fleetRoutes = game.Players.Values
             .SelectMany(p => p.Groups
                 .Where(g => g.InHyperspace
-                            && !string.IsNullOrWhiteSpace(g.FleetName)
                             && !string.IsNullOrWhiteSpace(g.Origin)
                             && !string.IsNullOrWhiteSpace(g.Destination))
                 .Select(g => new
                 {
                     ownerId = p.Id,
-                    fleetName = g.FleetName!,
+                    fleetName = string.IsNullOrWhiteSpace(g.FleetName) ? $"Group {g.Number}" : g.FleetName!,
                     origin = g.Origin!,
                     destination = g.Destination!,
                     ships = g.Ships,
@@ -134,16 +134,39 @@ public sealed class GameController(GameService svc) : ControllerBase
             })
             .ToList();
 
-        return Ok(new
-        {
-            game.Id, game.Name, game.Turn, game.GalaxySize,
-            game.LastTurnRunAt, game.AutoRunOnAllSubmitted,
-            players = game.Players.Values.Select(p => new
+        var playerInfos = game.Players.Values
+            .Select(p => new
             {
                 p.Id, p.Name, p.IsBot, p.Submitted, p.IsEliminated,
                 p.Tech,
                 planetCount = game.PlanetsOwnedBy(p.Id).Count(),
-            }),
+            })
+            .ToList();
+
+        var globalMessages = game.DiplomacyMessages
+            .Where(m => m.RecipientIds.Count == 0)
+            .OrderByDescending(m => m.SentAt)
+            .Take(80)
+            .OrderBy(m => m.SentAt)
+            .Select(m => new
+            {
+                m.Id,
+                m.Turn,
+                m.SentAt,
+                senderId = m.SenderId,
+                senderName = m.SenderName,
+                text = m.Text,
+            })
+            .ToList();
+
+        var visibility = BuildVisibilityMap(game);
+        var privateChats = BuildPrivateChats(game, visibility);
+
+        return Ok(new
+        {
+            game.Id, game.Name, game.Turn, game.GalaxySize,
+            game.LastTurnRunAt, game.AutoRunOnAllSubmitted,
+            players = playerInfos,
             planets = game.Planets.Values.Select(p => new
             {
                 p.Name, p.X, p.Y, p.Size, p.OwnerId, p.Population,
@@ -159,6 +182,11 @@ public sealed class GameController(GameService svc) : ControllerBase
                 b.PlanetName, b.AttackerRace, b.PreviousOwner,
             }),
             fleetRoutes,
+            diplomacy = new
+            {
+                globalMessages,
+                privateChats,
+            },
         });
     }
 
@@ -287,6 +315,113 @@ public sealed class GameController(GameService svc) : ControllerBase
     {
         await svc.BroadcastBotStatusAsync(id, req.RaceName, req.Status, req.Detail, req.Thinking, ct);
         return Ok();
+    }
+
+    private static Dictionary<string, HashSet<string>> BuildVisibilityMap(Game game)
+    {
+        var map = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase);
+        var sensorRange = Math.Max(24, game.GalaxySize * 0.6);
+        foreach (var player in game.Players.Values)
+        {
+            var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var anchors = new List<Planet>();
+            foreach (var planet in game.PlanetsOwnedBy(player.Id))
+            {
+                names.Add(planet.Name);
+                anchors.Add(planet);
+            }
+
+            foreach (var group in player.Groups.Where(g => !g.InHyperspace))
+            {
+                names.Add(group.At);
+                if (game.Planets.TryGetValue(group.At, out var atPlanet))
+                    anchors.Add(atPlanet);
+            }
+
+            foreach (var anchor in anchors)
+            {
+                foreach (var candidate in game.Planets.Values)
+                {
+                    if (anchor.DistanceTo(candidate) <= sensorRange)
+                        names.Add(candidate.Name);
+                }
+            }
+
+            map[player.Id] = names;
+        }
+
+        return map;
+    }
+
+    private static List<object> BuildPrivateChats(
+        Game game,
+        Dictionary<string, HashSet<string>> visibilityByPlayer)
+    {
+        var players = game.Players.Values.OrderBy(p => p.Name).ToList();
+        var chats = new List<object>();
+
+        for (int i = 0; i < players.Count; i++)
+        {
+            for (int j = i + 1; j < players.Count; j++)
+            {
+                var p1 = players[i];
+                var p2 = players[j];
+                var overlap = visibilityByPlayer[p1.Id]
+                    .Intersect(visibilityByPlayer[p2.Id], StringComparer.OrdinalIgnoreCase)
+                    .OrderBy(name => name)
+                    .ToList();
+                if (overlap.Count == 0)
+                    continue;
+
+                var messages = game.DiplomacyMessages
+                    .Where(m => IsPrivatePairMessage(m, p1.Id, p2.Id))
+                    .OrderByDescending(m => m.SentAt)
+                    .Take(60)
+                    .OrderBy(m => m.SentAt)
+                    .Select(m => new
+                    {
+                        m.Id,
+                        m.Turn,
+                        m.SentAt,
+                        senderId = m.SenderId,
+                        senderName = m.SenderName,
+                        text = m.Text,
+                    })
+                    .ToList();
+
+                chats.Add(new
+                {
+                    channelId = BuildPairChannelId(p1.Id, p2.Id),
+                    playerAId = p1.Id,
+                    playerAName = p1.Name,
+                    playerBId = p2.Id,
+                    playerBName = p2.Name,
+                    overlapPlanets = overlap.Take(4).ToList(),
+                    messages,
+                });
+            }
+        }
+
+        return chats;
+    }
+
+    private static string BuildPairChannelId(string playerAId, string playerBId)
+    {
+        return string.CompareOrdinal(playerAId, playerBId) <= 0
+            ? $"{playerAId}:{playerBId}"
+            : $"{playerBId}:{playerAId}";
+    }
+
+    private static bool IsPrivatePairMessage(DiplomacyMessage message, string playerAId, string playerBId)
+    {
+        if (message.RecipientIds.Count == 0)
+            return false;
+
+        var participants = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { message.SenderId };
+        foreach (var recipientId in message.RecipientIds)
+            participants.Add(recipientId);
+
+        return participants.Count == 2 && participants.Contains(playerAId) && participants.Contains(playerBId);
     }
 }
 

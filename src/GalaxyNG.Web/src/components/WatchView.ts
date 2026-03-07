@@ -1,6 +1,9 @@
 import { api } from '../api/client.js';
 import { ensureConnected } from '../api/hub.js';
-import type { SpectateData, SpectatePlayer, SpectateBattle, SpectateBombing, BotStatusEvent, TechLevels } from '../types/api.js';
+import type {
+  SpectateData, SpectatePlayer, SpectateBattle, SpectateBombing,
+  BotStatusEvent, TechLevels, SpectateChatMessage, SpectatePrivateChat,
+} from '../types/api.js';
 import { GalaxyMapThree, type ThreeFleetRoute, type ThreePlanet } from './GalaxyMapThree.js';
 import { PlanetPanel } from './PlanetPanel.js';
 import { PlayerHistoryPanel } from './PlayerHistoryPanel.js';
@@ -39,6 +42,9 @@ export class WatchView {
   private hub: HubConnection | null = null;
   private lastData: SpectateData | null = null;
   private activeRightTab: 'players' | 'summary' = 'players';
+  private diplomacyCollapsed = false;
+  private showAllRoutes = true;
+  private routeFocusPlanet: string | null = null;
 
   onBack?: () => void;
 
@@ -100,6 +106,20 @@ export class WatchView {
           <div class="wv-map-col" id="wv-map-col">
             <!-- Three.js canvas injected here -->
             <!-- Planet panel overlay -->
+            <button class="wv-route-toggle" id="wv-route-toggle">Маршруты: все</button>
+            <div class="wv-dip-chat" id="wv-dip-chat">
+              <button class="wv-dip-toggle" id="wv-dip-toggle">Дипломатия ▾</button>
+              <div class="wv-dip-body" id="wv-dip-body">
+                <section class="wv-dip-section">
+                  <div class="wv-dip-heading">Общий канал</div>
+                  <div class="wv-dip-messages" id="wv-dip-global"></div>
+                </section>
+                <section class="wv-dip-section">
+                  <div class="wv-dip-heading">Личные каналы</div>
+                  <div class="wv-dip-private" id="wv-dip-private"></div>
+                </section>
+              </div>
+            </div>
           </div>
           <div class="wv-right-col">
             <div class="wv-right-tabs">
@@ -148,15 +168,28 @@ export class WatchView {
       this.map.select(null);
       QuakeConsole.closeActive();
       this.planetPanel.hide();
+      this.routeFocusPlanet = null;
+      this.applyRouteDisplayMode();
     };
-    this.map.onPlanetClick = (name) => this.planetPanel.show(name);
+    this.map.onPlanetClick = (name) => {
+      this.routeFocusPlanet = name;
+      this.applyRouteDisplayMode();
+      this.planetPanel.show(name);
+    };
 
     this.el.querySelector('#btn-back')!.addEventListener('click', () => this.onBack?.());
     this.el.querySelector('#btn-run-turn')!.addEventListener('click', () => void this.runTurn());
+    this.el.querySelector('#wv-dip-toggle')!.addEventListener('click', () => this.toggleDiplomacyChat());
+    this.el.querySelector('#wv-route-toggle')!.addEventListener('click', () => {
+      this.showAllRoutes = !this.showAllRoutes;
+      this.updateRouteToggleLabel();
+      this.applyRouteDisplayMode();
+    });
 
     // Resize observer for Three.js canvas
     const ro = new ResizeObserver(() => this.map.resize());
     ro.observe(mapCol);
+    this.updateRouteToggleLabel();
   }
 
   // ---- Data refresh ----
@@ -169,6 +202,7 @@ export class WatchView {
       this.updatePlayerColors(data.players);
       this.renderPlayers(data);
       this.updateMap(data);
+      this.renderDiplomacy(data);
 
       if (data.turn !== this.currentTurn) {
         this.recordTurnEvent(data);
@@ -231,6 +265,8 @@ export class WatchView {
         const to = planetByName.get(route.destination);
         if (!from || !to) return null;
         return {
+          origin: route.origin,
+          destination: route.destination,
           x1: from.x,
           y1: from.y,
           x2: to.x,
@@ -243,6 +279,7 @@ export class WatchView {
       .filter((route): route is ThreeFleetRoute => route !== null);
 
     this.map.setData(data.galaxySize, planets, fleetRoutes);
+    this.applyRouteDisplayMode();
   }
 
   private recordTurnEvent(data: SpectateData): void {
@@ -266,6 +303,84 @@ export class WatchView {
       btn.disabled = false;
     }
   }
+
+  private toggleDiplomacyChat(): void {
+    this.diplomacyCollapsed = !this.diplomacyCollapsed;
+    const chat = this.el.querySelector<HTMLElement>('#wv-dip-chat');
+    const btn = this.el.querySelector<HTMLElement>('#wv-dip-toggle');
+    if (!chat || !btn) return;
+
+    chat.classList.toggle('collapsed', this.diplomacyCollapsed);
+    btn.textContent = this.diplomacyCollapsed ? 'Дипломатия ▸' : 'Дипломатия ▾';
+  }
+
+  private renderDiplomacy(data: SpectateData): void {
+    const globalEl = this.el.querySelector<HTMLElement>('#wv-dip-global');
+    const privateEl = this.el.querySelector<HTMLElement>('#wv-dip-private');
+    if (!globalEl || !privateEl) return;
+
+    const globalMessages = data.diplomacy?.globalMessages ?? [];
+    if (globalMessages.length === 0) {
+      globalEl.innerHTML = '<div class="wv-dip-empty">Пока нет дипломатических сообщений.</div>';
+    } else {
+      globalEl.innerHTML = globalMessages
+        .slice(-20)
+        .map(msg => this.renderMessageLine(msg))
+        .join('');
+      globalEl.scrollTop = globalEl.scrollHeight;
+    }
+
+    const privateChats = data.diplomacy?.privateChats ?? [];
+    if (privateChats.length === 0) {
+      privateEl.innerHTML = '<div class="wv-dip-empty">Личные каналы откроются при пересечении зон видимости рас.</div>';
+      return;
+    }
+
+    privateEl.innerHTML = privateChats
+      .map(chat => this.renderPrivateChat(chat))
+      .join('');
+  }
+
+  private renderPrivateChat(chat: SpectatePrivateChat): string {
+    const messages = chat.messages.length > 0
+      ? chat.messages.slice(-10).map(msg => this.renderMessageLine(msg)).join('')
+      : '<div class="wv-dip-empty">Канал открыт. Сообщений пока нет.</div>';
+
+    const overlapLabel = chat.overlapPlanets.length > 0
+      ? `Зона контакта: ${chat.overlapPlanets.join(', ')}`
+      : 'Зона контакта обнаружена';
+
+    return `
+      <div class="wv-dip-channel">
+        <div class="wv-dip-channel-head">${esc(`${chat.playerAName} ↔ ${chat.playerBName}`)}</div>
+        <div class="wv-dip-channel-overlap">${esc(overlapLabel)}</div>
+        <div class="wv-dip-messages small">${messages}</div>
+      </div>
+    `;
+  }
+
+  private renderMessageLine(msg: SpectateChatMessage): string {
+    const sent = new Date(msg.sentAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    return `
+      <div class="wv-dip-msg">
+        <div class="wv-dip-msg-head">
+          <span class="wv-dip-msg-race">${esc(msg.senderName)}</span>
+          <span class="wv-dip-msg-time">T${msg.turn} • ${esc(sent)}</span>
+        </div>
+        <div class="wv-dip-msg-text">${esc(msg.text)}</div>
+      </div>
+    `;
+  }
+
+  private applyRouteDisplayMode(): void {
+    this.map.setRouteDisplay(this.showAllRoutes, this.routeFocusPlanet);
+  }
+
+  private updateRouteToggleLabel(): void {
+    const btn = this.el.querySelector<HTMLElement>('#wv-route-toggle');
+    if (!btn) return;
+    btn.textContent = this.showAllRoutes ? 'Маршруты: все' : 'Маршруты: выбранные';
+  }
 }
 
 function timeAgo(iso: string): string {
@@ -273,4 +388,11 @@ function timeAgo(iso: string): string {
   if (secs < 60)   return `${secs}с назад`;
   if (secs < 3600) return `${Math.floor(secs / 60)}м назад`;
   return `${Math.floor(secs / 3600)}ч назад`;
+}
+
+function esc(s: string): string {
+  return s
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
 }
