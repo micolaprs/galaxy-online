@@ -7,6 +7,8 @@
 #   ./scripts/demo.sh -n 5           # 5 ботов
 #   ./scripts/demo.sh -s 400         # размер галактики
 #   ./scripts/demo.sh --no-kill      # не убивать уже запущенные процессы
+#   ./scripts/demo.sh --openai-codex --auth-dir ~/.codex
+#   ./scripts/demo.sh --provider openai/codex --auth-dir ~/.codex
 
 set -euo pipefail
 
@@ -18,6 +20,8 @@ NUM_BOTS=3
 DO_KILL=true    # по умолчанию: убиваем старые процессы
 DO_CLEAN=false  # по умолчанию: возобновляем последнюю игру
 FORCE_NEW=false # --new: удалить старые и создать новую
+LLM_PROVIDER="${GALAXYNG_BOT_LLM_PROVIDER:-lmstudio}"
+PROVIDER_AUTH_DIR="${GALAXYNG_OPENAI_CODEX_AUTH_DIR:-}"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -28,6 +32,9 @@ while [[ $# -gt 0 ]]; do
     --no-open)      OPEN_BROWSER=false; shift ;;
     --no-kill)      DO_KILL=false; shift ;;
     --new)          FORCE_NEW=true; DO_CLEAN=true; shift ;;
+    --openai-codex) LLM_PROVIDER="openai/codex"; shift ;;
+    --provider)     LLM_PROVIDER="$2"; shift 2 ;;
+    --auth-dir)     PROVIDER_AUTH_DIR="$2"; shift 2 ;;
     -h|--help)
       echo "Использование: $0 [опции]"
       echo ""
@@ -41,6 +48,13 @@ while [[ $# -gt 0 ]]; do
       echo "  -o, --open            Открыть браузер после запуска (по умолчанию)"
       echo "  --no-open             Не открывать браузер"
       echo "  --no-kill             Не убивать уже запущенные сервер/боты"
+      echo "  --openai-codex        Быстрый флаг: LLM-провайдер openai/codex"
+      echo "  --provider NAME       LLM-провайдер: lmstudio | openai/codex"
+      echo "  --auth-dir PATH       Путь к папке auth-файлов Codex (для openai/codex)"
+      echo ""
+      echo "  Можно задавать через env:"
+      echo "    GALAXYNG_BOT_LLM_PROVIDER=lmstudio|openai/codex"
+      echo "    GALAXYNG_OPENAI_CODEX_AUTH_DIR=~/.codex"
       echo ""
       echo "По умолчанию: убиваем старые процессы + возобновляем последнюю игру + открываем браузер."
       exit 0 ;;
@@ -80,6 +94,68 @@ SERVER_DIR="$REPO_ROOT/src/GalaxyNG.Server"
 WEB_DIR="$REPO_ROOT/src/GalaxyNG.Web"
 BOT_DIR="$REPO_ROOT/src/GalaxyNG.Bot"
 GAMES_DIR="${HOME}/.galaxyng/games"
+
+expand_home() {
+  local p="$1"
+  if [[ "$p" == "~/"* ]]; then
+    echo "${HOME}/${p#~/}"
+  else
+    echo "$p"
+  fi
+}
+
+normalize_provider() {
+  echo "$1" | tr '[:upper:]' '[:lower:]'
+}
+
+resolve_llm_runtime() {
+  local requested
+  requested="$(normalize_provider "$LLM_PROVIDER")"
+
+  BOT_LLM_PROVIDER="$requested"
+  BOT_LLM_API="chat-completions"
+  BOT_LLM_BASE_URL="http://localhost:1234/v1"
+  BOT_LLM_MODEL="${GALAXYNG_BOT_LLM_MODEL:-qwen/qwen3.5-9b}"
+  BOT_LLM_API_KEY="${GALAXYNG_BOT_LLM_API_KEY:-lm-studio}"
+  BOT_LLM_AUTH_DIR=""
+
+  if [[ "$requested" == "openai/codex" || "$requested" == "openai-codex" ]]; then
+    local auth_dir token
+    auth_dir="$(expand_home "${PROVIDER_AUTH_DIR:-}")"
+    token=""
+    if [[ -z "$auth_dir" ]]; then
+      auth_dir="$HOME/.codex"
+    fi
+    if [[ -n "$auth_dir" && -f "$auth_dir/auth.json" ]]; then
+      token="$(python3 - "$auth_dir/auth.json" <<'PY'
+import json, sys
+p = sys.argv[1]
+try:
+    with open(p, "r", encoding="utf-8") as f:
+        d = json.load(f)
+    t = (d.get("tokens") or {}).get("access_token") or ""
+    if t:
+        print(t)
+    else:
+        print(d.get("OPENAI_API_KEY") or "")
+except Exception:
+    print("")
+PY
+)"
+    fi
+
+    if [[ -n "$auth_dir" && -n "$token" ]]; then
+      BOT_LLM_PROVIDER="openai/codex"
+      BOT_LLM_API="responses"
+      BOT_LLM_BASE_URL="https://chatgpt.com/backend-api"
+      BOT_LLM_MODEL="${GALAXYNG_BOT_LLM_MODEL:-gpt-5.3-codex}"
+      BOT_LLM_API_KEY="$token"
+      BOT_LLM_AUTH_DIR="$auth_dir"
+    else
+      warn "Провайдер openai/codex недоступен (нет valid auth.json в --auth-dir / GALAXYNG_OPENAI_CODEX_AUTH_DIR). Переходим на LM Studio."
+    fi
+  fi
+}
 
 # ── Цвета ────────────────────────────────────────────────────────────────────
 GREEN='\033[0;32m'; YELLOW='\033[1;33m'; CYAN='\033[0;36m'; RED='\033[0;31m'; NC='\033[0m'
@@ -289,6 +365,12 @@ info "Шаг 4/5 — Сборка ботов…"
 cd "$BOT_DIR"
 dotnet build -c Release -v quiet 2>&1 | tail -3
 
+resolve_llm_runtime
+ok "LLM provider: $BOT_LLM_PROVIDER (model: $BOT_LLM_MODEL)"
+if [[ -n "$BOT_LLM_AUTH_DIR" ]]; then
+  ok "Auth dir: $BOT_LLM_AUTH_DIR"
+fi
+
 info "Запуск ${#BOT_NAMES[@]} ботов…"
 for i in "${!BOT_NAMES[@]}"; do
   BOT_NAME="${BOT_NAMES[$i]}"
@@ -298,6 +380,12 @@ for i in "${!BOT_NAMES[@]}"; do
   Bot__RaceName="$BOT_NAME" \
   Bot__Password="$BOT_PW" \
   Bot__ServerUrl="$SERVER_URL" \
+  Bot__Llm__Provider="$BOT_LLM_PROVIDER" \
+  Bot__Llm__Api="$BOT_LLM_API" \
+  Bot__Llm__BaseUrl="$BOT_LLM_BASE_URL" \
+  Bot__Llm__Model="$BOT_LLM_MODEL" \
+  Bot__Llm__ApiKey="$BOT_LLM_API_KEY" \
+  Bot__Llm__AuthFilesDir="$BOT_LLM_AUTH_DIR" \
     dotnet run -c Release --no-build --no-launch-profile >> "$LOG_FILE" 2>&1 &
   BOT_PIDS+=($!)
   ok "Бот $BOT_NAME запущен (PID ${BOT_PIDS[$i]}, лог: $LOG_FILE)"

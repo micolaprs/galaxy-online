@@ -9,7 +9,7 @@
 | Game Engine     | C# 14 / .NET 10 (class library)         |
 | Game Server     | ASP.NET 10 + SignalR + MCP 1.1          |
 | Web UI          | TypeScript + Vite (собирается в wwwroot)|
-| LLM Bot         | C# + OpenAI-compatible API (LM Studio)  |
+| LLM Bot         | C# + multi-provider LLM (LM Studio / OpenAI Codex) |
 | Тесты           | xUnit + FluentAssertions                |
 
 ---
@@ -18,7 +18,7 @@
 
 - [.NET 10 SDK](https://dotnet.microsoft.com/download)
 - [Node.js 23](https://nodejs.org/) (через nvm: `nvm use 23`)
-- _(опционально)_ [LM Studio](https://lmstudio.ai/) с моделью `qwen/qwen3-14b` — для LLM-ботов
+- _(опционально)_ [LM Studio](https://lmstudio.ai/) с моделью `qwen/qwen3-14b` — локальный provider по умолчанию
 
 ---
 
@@ -43,6 +43,15 @@
 
 Откроется браузер на игровой странице (`/?game=GAMEID&race=Humans&pw=pw1`).
 
+### Запуск с OpenAI Codex
+
+```bash
+export GALAXYNG_OPENAI_CODEX_AUTH_DIR=~/.codex
+./scripts/demo.sh --openai-codex --auth-dir ~/.codex -o
+```
+
+Флаг `--openai-codex` включает провайдер `openai/codex`. Если auth-файлы недоступны, скрипт автоматически вернётся на локальный `lmstudio`.
+
 ### Все флаги скрипта
 
 | Флаг                      | Описание                                         | По умолчанию |
@@ -50,10 +59,20 @@
 | `-b`, `--bots-only`       | 4 бота, без человека                             | выкл         |
 | `-s N`, `--size N`        | Размер галактики (радиус в св.годах)             | `200`        |
 | `-o`, `--open`            | Открыть браузер после запуска                    | выкл         |
+| `--openai-codex`          | Быстрый флаг для провайдера `openai/codex`       | выкл         |
+| `--provider NAME`         | LLM provider: `lmstudio` или `openai/codex`      | `lmstudio`   |
+| `--auth-dir PATH`         | Путь к auth-файлам (для `openai/codex`)          | из env       |
 
 Сервер поднимается на **http://localhost:5055**.
 
-> **Требование для ботов:** LM Studio должен быть запущен с загруженной моделью на `http://localhost:1234`.
+> По умолчанию используется `lmstudio`. Если выбран внешний провайдер и он недоступен (например, нет `auth.json`), demo-скрипт автоматически вернётся к `lmstudio`.
+
+Переменные окружения для скрипта:
+
+```bash
+export GALAXYNG_BOT_LLM_PROVIDER=lmstudio
+export GALAXYNG_OPENAI_CODEX_AUTH_DIR=~/.codex
+```
 
 ---
 
@@ -223,14 +242,32 @@ npm run dev
     "Password":  "botpw",      // ← пароль расы бота
     "ServerUrl": "http://localhost:5055",
     "Llm": {
+      "Provider":    "lmstudio",
+      "Api":         "chat-completions",
       "BaseUrl":     "http://localhost:1234/v1",
-      "Model":       "qwen/qwen3-14b",
+      "Model":       "qwen/qwen3.5-9b",
       "Temperature": 0.7,
       "MaxTokens":   4096,
-      "ApiKey":      "lm-studio"
+      "ApiKey":      "lm-studio",
+      "AuthFilesDir": ""
     }
   }
 }
+```
+
+Для `openai/codex`:
+
+```bash
+export GALAXYNG_OPENAI_CODEX_AUTH_DIR=~/.codex
+dotnet run --project src/GalaxyNG.Bot -- \
+  Bot:GameId=A1B2C3D4 \
+  Bot:RaceName=Alpha \
+  Bot:Password=pw2 \
+  Bot:ServerUrl=http://localhost:5055 \
+  Bot:Llm:Provider=openai/codex \
+  Bot:Llm:Api=responses \
+  Bot:Llm:BaseUrl=https://chatgpt.com/backend-api \
+  Bot:Llm:Model=gpt-5.3-codex
 ```
 
 ### Запуск бота
