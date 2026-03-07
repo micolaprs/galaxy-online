@@ -22,7 +22,59 @@
 
 ---
 
-## Быстрый старт
+## Быстрый старт через скрипт
+
+Самый простой способ — использовать `scripts/demo.sh`. Скрипт автоматически собирает frontend, запускает сервер, создаёт игру и поднимает ботов.
+
+### Только боты (без игрока-человека)
+
+```bash
+./scripts/demo.sh -b -o
+```
+
+- `-b` / `--bots-only` — 4 LLM-бота играют друг против друга
+- `-o` / `--open` — открыть браузер на странице наблюдателя (`/?watch=GAMEID`)
+
+### Один игрок + 3 бота
+
+```bash
+./scripts/demo.sh -o
+```
+
+Откроется браузер на игровой странице (`/?game=GAMEID&race=Humans&pw=pw1`).
+
+### Все флаги скрипта
+
+| Флаг                      | Описание                                         | По умолчанию |
+|---------------------------|--------------------------------------------------|--------------|
+| `-b`, `--bots-only`       | 4 бота, без человека                             | выкл         |
+| `-s N`, `--size N`        | Размер галактики (радиус в св.годах)             | `200`        |
+| `-o`, `--open`            | Открыть браузер после запуска                    | выкл         |
+
+Сервер поднимается на **http://localhost:5055**.
+
+> **Требование для ботов:** LM Studio должен быть запущен с загруженной моделью на `http://localhost:1234`.
+
+---
+
+## Наблюдатель (Watch View)
+
+После запуска демо откройте:
+
+```
+http://localhost:5055/?watch=GAMEID
+```
+
+На странице отображаются:
+- **Карта галактики** — планеты раскрашены по владельцу, масштабируется колёсиком, перетаскивается
+- **Список игроков** — статус (✓ submitted / ⏳ waiting / ✗ out), технологии, количество планет
+- **Лог ходов** — битвы, бомбардировки, или «мирный ход» за последние 20 ходов
+
+Страница автоматически обновляется каждые 5 секунд.
+
+---
+
+## Ручной запуск (без скрипта)
 
 ### 1. Клонировать репозиторий
 
@@ -44,30 +96,26 @@ npm run build     # output → src/GalaxyNG.Server/wwwroot/
 
 ```bash
 cd src/GalaxyNG.Server
-dotnet run
+dotnet run --no-launch-profile --urls "http://localhost:5055"
 ```
-
-Сервер запустится на **http://localhost:5000**.
 
 ### 4. Открыть игру в браузере
 
 ```
-http://localhost:5000
+http://localhost:5055
 ```
 
-Нажать **New Game** → ввести название, имя расы, пароль → **Create Game**.
-Появится ссылка вида `http://localhost:5000/?game=ABCD1234` — передайте её другим игрокам.
+Главная страница показывает список активных игр. Нажмите **New Game** → ввести название, имя расы, пароль → **Create Game**.
+Появится ссылка вида `http://localhost:5055/?game=ABCD1234` — передайте её другим игрокам.
 
 ---
 
-## Пример: один игрок + 3 бота
-
-Полный сценарий с одним живым игроком и тремя LLM-ботами, запущенными за ~2 минуты.
+## Пример: один игрок + 3 бота (вручную)
 
 ### Шаг 1 — создать игру через curl
 
 ```bash
-curl -s -X POST http://localhost:5000/api/games \
+curl -s -X POST http://localhost:5055/api/games \
   -H "Content-Type: application/json" \
   -d '{
     "name": "Solo4",
@@ -87,7 +135,7 @@ curl -s -X POST http://localhost:5000/api/games \
 ### Шаг 2 — открыть браузер
 
 ```
-http://localhost:5000/?game=A1B2C3D4&race=Humans&pw=pw1
+http://localhost:5055/?game=A1B2C3D4&race=Humans&pw=pw1
 ```
 
 Или просто перейдите по `joinLink` и введите `Humans` / `pw1`.
@@ -125,7 +173,7 @@ p P1 Scout               ; домашняя планета строит разв
 После того как все четыре расы сдали приказы (или просто когда захотите):
 
 ```bash
-curl -X POST http://localhost:5000/api/games/A1B2C3D4/run-turn
+curl -X POST http://localhost:5055/api/games/A1B2C3D4/run-turn
 ```
 
 Перейдите на вкладку **Turn Report** в браузере — там будут результаты хода.
@@ -146,12 +194,12 @@ curl -X POST http://localhost:5000/api/games/A1B2C3D4/run-turn
 cd src/GalaxyNG.Server
 dotnet watch run
 
-# Терминал 2 — frontend (proxy на :5000)
+# Терминал 2 — frontend (proxy на :5055)
 cd src/GalaxyNG.Web
 npm run dev
 ```
 
-Откройте **http://localhost:5173** (Vite автоматически проксирует `/api` и `/hubs` на backend).
+Откройте **http://localhost:5173** (Vite автоматически проксирует `/api` и `/hubs` на backend на порт 5055).
 
 ---
 
@@ -173,7 +221,7 @@ npm run dev
     "GameId":    "ABCD1234",   // ← ID игры из браузера
     "RaceName":  "BotRace",    // ← имя расы бота (задаётся при создании игры)
     "Password":  "botpw",      // ← пароль расы бота
-    "ServerUrl": "http://localhost:5000",
+    "ServerUrl": "http://localhost:5055",
     "Llm": {
       "BaseUrl":     "http://localhost:1234/v1",
       "Model":       "qwen/qwen3-14b",
@@ -201,7 +249,7 @@ dotnet run
 MCP-сервер встроен в Game Server и доступен по адресу:
 
 ```
-http://localhost:5000/mcp
+http://localhost:5055/mcp
 ```
 
 Доступные инструменты (tools):
@@ -222,7 +270,7 @@ http://localhost:5000/mcp
 {
   "mcpServers": {
     "galaxyng": {
-      "url": "http://localhost:5000/mcp"
+      "url": "http://localhost:5055/mcp"
     }
   }
 }
@@ -251,6 +299,7 @@ dotnet test
 | POST   | `/api/games`                        | Создать игру                      |
 | GET    | `/api/games`                        | Список игр                        |
 | GET    | `/api/games/{id}`                   | Информация об игре                |
+| GET    | `/api/games/{id}/spectate`          | Публичное состояние для наблюдателя |
 | POST   | `/api/games/{id}/orders`            | Отправить приказы                 |
 | GET    | `/api/games/{id}/report/{race}`     | Получить отчёт о ходе             |
 | GET    | `/api/games/{id}/forecast/{race}`   | Прогноз хода                      |
@@ -259,7 +308,7 @@ dotnet test
 ### Пример: создать игру через curl
 
 ```bash
-curl -X POST http://localhost:5000/api/games \
+curl -X POST http://localhost:5055/api/games \
   -H "Content-Type: application/json" \
   -d '{
     "name": "MyGame",
@@ -276,7 +325,7 @@ curl -X POST http://localhost:5000/api/games \
 ```json
 {
   "gameId": "ABCD1234",
-  "joinLink": "http://localhost:5000/?game=ABCD1234",
+  "joinLink": "http://localhost:5055/?game=ABCD1234",
   "players": [
     { "id": "P1", "name": "Terrans", "password": "secret" },
     { "id": "P2", "name": "BotRace", "password": "botpw"  }
@@ -288,7 +337,7 @@ curl -X POST http://localhost:5000/api/games \
 ### Пример: отправить приказы
 
 ```bash
-curl -X POST http://localhost:5000/api/games/ABCD1234/orders \
+curl -X POST http://localhost:5055/api/games/ABCD1234/orders \
   -H "Content-Type: application/json" \
   -d '{
     "raceName": "Terrans",
@@ -301,7 +350,7 @@ curl -X POST http://localhost:5000/api/games/ABCD1234/orders \
 ### Пример: выполнить ход
 
 ```bash
-curl -X POST http://localhost:5000/api/games/ABCD1234/run-turn
+curl -X POST http://localhost:5055/api/games/ABCD1234/run-turn
 ```
 
 ---
@@ -330,11 +379,13 @@ r <планета> <CAP|COL|MAT|EMP> [назначение]                     
 
 ```
 galaxy-online/
+├── scripts/
+│   └── demo.sh                # Скрипт для быстрого запуска демо
 ├── src/
 │   ├── GalaxyNG.Engine/       # Игровой движок (C# library)
 │   │   ├── Models/            # Game, Player, Planet, Group, ShipType…
 │   │   └── Services/          # Generator, Parser, TurnProcessor, Combat…
-│   ├── GalaxyNG.Server/       # ASP.NET сервер + MCP
+│   ├── GalaxyNG.Server/       # ASP.NET сервер + MCP (порт 5055)
 │   │   ├── Controllers/       # REST API
 │   │   ├── Hubs/              # SignalR
 │   │   ├── Mcp/               # MCP tools
@@ -345,7 +396,7 @@ galaxy-online/
 │   └── GalaxyNG.Web/          # Frontend (TypeScript + Vite)
 │       ├── src/
 │       │   ├── api/           # REST client, session
-│       │   ├── components/    # Lobby, GameView, GalaxyMap, OrdersEditor
+│       │   ├── components/    # GameList, WatchView, Lobby, GameView, GalaxyMap
 │       │   └── types/         # TypeScript типы
 │       └── index.html
 ├── tests/
