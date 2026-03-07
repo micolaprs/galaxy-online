@@ -69,9 +69,13 @@ public sealed class BotAgent(
             await thinkingCts.CancelAsync();
             await heartbeat;
 
+            // Broadcast the full LLM response (reasoning + orders) to the UI
+            await PostBotStatusAsync("thinking", $"ход {turn}, попытка {attempt}/3 — ответ получен", raw, ct);
+
             orders = ExtractOrders(raw);
             int orderLines = orders.Split('\n', StringSplitOptions.RemoveEmptyEntries).Length;
-            logger.LogInformation("📝 [{Race}] LLM составил {Lines} приказов", config.RaceName, orderLines);
+            logger.LogInformation("📝 [{Race}] LLM составил {Lines} приказов (из {Total} знаков ответа)",
+                config.RaceName, orderLines, raw.Length);
 
             // 3. Validate
             await PostBotStatusAsync("validating", $"ход {turn}, попытка {attempt}", ct);
@@ -168,11 +172,14 @@ public sealed class BotAgent(
     }
 
     private async Task PostBotStatusAsync(string status, string? detail, CancellationToken ct)
+        => await PostBotStatusAsync(status, detail, null, ct);
+
+    private async Task PostBotStatusAsync(string status, string? detail, string? thinking, CancellationToken ct)
     {
         try
         {
             var url  = $"{config.ServerUrl}/api/games/{config.GameId}/bot-status";
-            var body = new { raceName = config.RaceName, status, detail };
+            var body = new { raceName = config.RaceName, status, detail, thinking };
             await Http.PostAsJsonAsync(url, body, ct);
         }
         catch (Exception ex)

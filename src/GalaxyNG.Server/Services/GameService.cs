@@ -126,8 +126,21 @@ public sealed class GameService(
         await SaveGameAsync(game, ct);
 
         if (isFinal)
+        {
+            var waiting = game.Players.Values
+                .Where(p => !p.IsEliminated && !p.Submitted)
+                .Select(p => p.Name).ToList();
+
+            if (waiting.Count == 0)
+                logger.LogInformation("✅ [{Race}] подал приказы. Все игроки готовы — запускаем ход {Turn}",
+                    raceName, game.Turn);
+            else
+                logger.LogInformation("✅ [{Race}] подал приказы за ход {Turn}. Ждём: [{Waiting}]",
+                    raceName, game.Turn, string.Join(", ", waiting));
+
             await hub.Clients.Group(gameId)
                 .SendAsync("PlayerSubmitted", new { raceName }, ct);
+        }
 
         if (game.AutoRunOnAllSubmitted && game.AllPlayersSubmitted())
             _ = Task.Run(() => RunTurnAsync(gameId, CancellationToken.None), CancellationToken.None);
@@ -216,7 +229,7 @@ public sealed class GameService(
     // ---- Bot status ----
 
     public async Task BroadcastBotStatusAsync(
-        string gameId, string raceName, string status, string? detail,
+        string gameId, string raceName, string status, string? detail, string? thinking = null,
         CancellationToken ct = default)
     {
         logger.LogInformation("Bot {Race} status: {Status}{Detail}",
@@ -227,6 +240,7 @@ public sealed class GameService(
             raceName,
             status,
             detail,
+            thinking,
             time = DateTimeOffset.UtcNow.ToString("HH:mm:ss"),
         }, ct);
     }

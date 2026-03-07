@@ -75,6 +75,7 @@ export interface BotStatusEvent {
   raceName: string;
   status: 'idle' | 'waiting' | 'reading-report' | 'thinking' | 'validating' | 'submitting' | 'submitted' | 'error' | string;
   detail: string | null;
+  thinking: string | null;
   time: string;
 }
 

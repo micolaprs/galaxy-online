@@ -25,7 +25,7 @@ var host = Host.CreateDefaultBuilder(args)
             Llm = new LlmConfig
             {
                 BaseUrl     = cfg["Bot:Llm:BaseUrl"]     ?? "http://localhost:1234/v1",
-                Model       = cfg["Bot:Llm:Model"]       ?? "qwen/qwen3-14b",
+                Model       = cfg["Bot:Llm:Model"]       ?? "qwen/qwen3.5-9b",
                 Temperature = double.TryParse(cfg["Bot:Llm:Temperature"], out double t) ? t : 0.7,
                 MaxTokens   = int.TryParse(cfg["Bot:Llm:MaxTokens"], out int m) ? m : 4096,
                 ApiKey      = cfg["Bot:Llm:ApiKey"]      ?? "lm-studio",

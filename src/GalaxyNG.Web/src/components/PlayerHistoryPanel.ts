@@ -59,14 +59,15 @@ export class PlayerHistoryPanel {
       const color = this.playerColorMap.get(p.id) ?? '#888';
 
       // Determine status label + css class
+      // p.submitted (from server) takes priority over transient bot status
       let statusKey = '';
       if (p.isEliminated) {
         statusKey = '';
+      } else if (p.submitted) {
+        statusKey = 'submitted';
       } else if (p.isBot) {
         const ev = this.botStatuses.get(p.name);
-        statusKey = ev ? ev.status : (p.submitted ? 'submitted' : 'waiting');
-      } else {
-        statusKey = p.submitted ? 'submitted' : '';
+        statusKey = ev ? ev.status : 'waiting';
       }
       const statusLabel = STATUS_LABEL[statusKey] ?? '';
       const statusCss   = STATUS_CSS[statusKey]   ?? '';
@@ -74,14 +75,25 @@ export class PlayerHistoryPanel {
         ? `<span class="ph-status ph-status-${statusCss}">${statusLabel}</span>`
         : '';
 
+      const ev = p.isBot ? (this.botStatuses.get(p.name) ?? null) : null;
+      const thinkingHtml = ev?.thinking
+        ? `<details class="ph-thinking">
+             <summary class="ph-thinking-toggle">💭 Размышления</summary>
+             <pre class="ph-thinking-text">${esc(ev.thinking)}</pre>
+           </details>`
+        : '';
+
       return `
         <div class="ph-player ${p.isEliminated ? 'eliminated' : ''}"
              data-race="${esc(p.name)}" style="--dot:${color}">
-          <span class="ph-dot"></span>
-          <span class="ph-icon">${p.isBot ? '🤖' : '👤'}</span>
-          <span class="ph-name">${esc(p.name)}</span>
-          ${statusHtml}
-          <span class="ph-count muted">${p.planetCount}🌍</span>
+          <div class="ph-player-row">
+            <span class="ph-dot"></span>
+            <span class="ph-icon">${p.isBot ? '🤖' : '👤'}</span>
+            <span class="ph-name">${esc(p.name)}</span>
+            ${statusHtml}
+            <span class="ph-count muted">${p.planetCount}🌍</span>
+          </div>
+          ${thinkingHtml}
         </div>
       `;
     }).join('');

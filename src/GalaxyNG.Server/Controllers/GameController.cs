@@ -256,7 +256,7 @@ public sealed class GameController(GameService svc) : ControllerBase
     public async Task<IActionResult> PostBotStatus(
         string id, [FromBody] BotStatusRequest req, CancellationToken ct)
     {
-        await svc.BroadcastBotStatusAsync(id, req.RaceName, req.Status, req.Detail, ct);
+        await svc.BroadcastBotStatusAsync(id, req.RaceName, req.Status, req.Detail, req.Thinking, ct);
         return Ok();
     }
 }
@@ -284,5 +284,6 @@ public sealed record SubmitOrdersRequest(
 public sealed record BotStatusRequest(
     string  RaceName,
     string  Status,
-    string? Detail = null
+    string? Detail   = null,
+    string? Thinking = null
 );

@@ -434,8 +434,7 @@ input:focus { outline: none; border-color: var(--accent); }
 }
 .ph-player-list { flex: 1; overflow-y: auto; }
 .ph-player {
-  display: flex; align-items: center; gap: 8px;
-  padding: 9px 14px; border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
   cursor: pointer; transition: background .1s;
 }
 .ph-player:hover { background: rgba(255,255,255,.04); }
@@ -538,3 +537,24 @@ input:focus { outline: none; border-color: var(--accent); }
 .ph-status-submitted { color: #4ade80; background: rgba(74,222,128,.12); }
 .ph-status-idle      { color: #475569; }
 .ph-status-error     { color: #f87171; background: rgba(248,113,113,.12); }
+
+/* ---- Bot thinking block ---- */
+.ph-player-row {
+  display: flex; align-items: center; gap: 6px;
+  padding: 8px 12px; cursor: pointer;
+}
+.ph-thinking {
+  border-top: 1px solid var(--border);
+  background: rgba(0,0,0,.25);
+}
+.ph-thinking-toggle {
+  padding: 4px 12px; font-size: 10px; color: var(--muted);
+  cursor: pointer; list-style: none; user-select: none;
+}
+.ph-thinking-toggle:hover { color: var(--accent); }
+.ph-thinking-text {
+  margin: 0; padding: 8px 12px 10px;
+  font-size: 10px; line-height: 1.55; color: #94a3b8;
+  white-space: pre-wrap; word-break: break-word;
+  max-height: 300px; overflow-y: auto;
+}
