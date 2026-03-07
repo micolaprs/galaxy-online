@@ -12,6 +12,29 @@ export interface ThreePlanet {
 }
 
 const STAR_COUNT = 800;
+const ASTEROID_COUNT = 11;
+
+interface PlanetVisual {
+  planet: ThreePlanet;
+  mesh: THREE.Mesh;
+  halo: THREE.Mesh;
+  tilt: number;
+  rotationSpeed: number;
+  wobbleOffset: number;
+}
+
+interface AsteroidFlyby {
+  mesh: THREE.Mesh;
+  velocity: THREE.Vector3;
+  spin: THREE.Vector3;
+  bounds: number;
+}
+
+interface ClickPulse {
+  mesh: THREE.Mesh;
+  life: number;
+  ttl: number;
+}
 
 export class GalaxyMapThree {
   private renderer!: THREE.WebGLRenderer;
@@ -20,8 +43,11 @@ export class GalaxyMapThree {
   private starField!: THREE.Points;
 
   // Planet meshes & metadata
-  private planetMeshes: THREE.Mesh[]   = [];
-  private planets: ThreePlanet[]        = [];
+  private cleanupMeshes: THREE.Object3D[] = [];
+  private planetVisuals: PlanetVisual[] = [];
+  private asteroidFlybys: AsteroidFlyby[] = [];
+  private clickPulses: ClickPulse[] = [];
+  private planets: ThreePlanet[] = [];
   private galaxySize = 200;
 
   // Selection ring
@@ -48,6 +74,7 @@ export class GalaxyMapThree {
 
   /** Called when user clicks a planet. */
   onPlanetClick?: (name: string, screenX: number, screenY: number) => void;
+  onMapClick?: () => void;
 
   constructor(private container: HTMLElement) {
     this.init();
@@ -71,6 +98,19 @@ export class GalaxyMapThree {
 
   destroy(): void {
     if (this.animFrame !== null) cancelAnimationFrame(this.animFrame);
+    this.disposeSceneObjects();
+    for (const pulse of this.clickPulses) {
+      this.scene.remove(pulse.mesh);
+      pulse.mesh.geometry.dispose();
+      (pulse.mesh.material as THREE.Material).dispose();
+    }
+    this.clickPulses = [];
+    if (this.selectionRing) {
+      this.scene.remove(this.selectionRing);
+      this.selectionRing.geometry.dispose();
+      (this.selectionRing.material as THREE.Material).dispose();
+      this.selectionRing = null;
+    }
     this.renderer.dispose();
     this.container.innerHTML = '';
   }
@@ -137,6 +177,46 @@ export class GalaxyMapThree {
     this.scene.add(this.starField);
   }
 
+  private buildAsteroidFlybys(): void {
+    this.disposeAsteroidFlybys();
+    const span = Math.max(220, this.galaxySize * 1.5);
+
+    for (let i = 0; i < ASTEROID_COUNT; i++) {
+      const geo = new THREE.SphereGeometry(0.22 + Math.random() * 0.26, 10, 8);
+      const mat = new THREE.MeshPhongMaterial({
+        color: 0xcbd5e1,
+        emissive: 0x1e293b,
+        emissiveIntensity: 0.18,
+        transparent: true,
+        opacity: 0.45 + Math.random() * 0.25,
+      });
+      const mesh = new THREE.Mesh(geo, mat);
+      mesh.position.set(
+        (Math.random() - 0.5) * span,
+        (Math.random() - 0.5) * span,
+        1.5 + Math.random() * 2.5,
+      );
+      mesh.scale.set(1.8 + Math.random() * 1.4, 0.5 + Math.random() * 0.3, 0.55 + Math.random() * 0.4);
+      mesh.rotation.set(Math.random() * Math.PI, Math.random() * Math.PI, Math.random() * Math.PI);
+      this.scene.add(mesh);
+      this.cleanupMeshes.push(mesh);
+      this.asteroidFlybys.push({
+        mesh,
+        velocity: new THREE.Vector3(
+          3.5 + Math.random() * 4,
+          -1.2 - Math.random() * 2.2,
+          0,
+        ),
+        spin: new THREE.Vector3(
+          (Math.random() - 0.5) * 0.8,
+          (Math.random() - 0.5) * 0.9,
+          (Math.random() - 0.5) * 0.7,
+        ),
+        bounds: span * 0.7,
+      });
+    }
+  }
+
   private setupLights(): void {
     const ambient = new THREE.AmbientLight(0x223355, 0.8);
     this.scene.add(ambient);
@@ -149,15 +229,11 @@ export class GalaxyMapThree {
   // ---- Planet meshes ----
 
   private buildPlanetMeshes(): void {
-    // Remove old meshes
-    for (const m of this.planetMeshes) {
-      this.scene.remove(m);
-      m.geometry.dispose();
-      (m.material as THREE.Material).dispose();
-    }
-    this.planetMeshes = [];
+    this.disposeSceneObjects();
     if (this.selectionRing) {
       this.scene.remove(this.selectionRing);
+      this.selectionRing.geometry.dispose();
+      (this.selectionRing.material as THREE.Material).dispose();
       this.selectionRing = null;
     }
 
@@ -174,7 +250,29 @@ export class GalaxyMapThree {
       mesh.position.set(p.x, -p.y, 0);   // flip Y (game Y grows down)
       mesh.userData['planet'] = p.name;
       this.scene.add(mesh);
-      this.planetMeshes.push(mesh);
+      this.cleanupMeshes.push(mesh);
+
+      const haloGeo = new THREE.RingGeometry(radius * 1.28, radius * 1.6, 40);
+      const haloMat = new THREE.MeshBasicMaterial({
+        color: this.hexColor(p.color),
+        transparent: true,
+        opacity: 0.14,
+        blending: THREE.AdditiveBlending,
+        side: THREE.DoubleSide,
+        depthWrite: false,
+      });
+      const halo = new THREE.Mesh(haloGeo, haloMat);
+      halo.position.set(p.x, -p.y, -0.12);
+      this.scene.add(halo);
+      this.cleanupMeshes.push(halo);
+      this.planetVisuals.push({
+        planet: p,
+        mesh,
+        halo,
+        tilt: (Math.random() - 0.5) * 0.28,
+        rotationSpeed: 0.11 + Math.random() * 0.18,
+        wobbleOffset: Math.random() * Math.PI * 2,
+      });
 
       // Ship dot
       if (p.hasShips) {
@@ -183,10 +281,11 @@ export class GalaxyMapThree {
         const dot    = new THREE.Mesh(dotGeo, dotMat);
         dot.position.set(p.x + radius * 1.2, -(p.y - radius * 1.2), 0.5);
         this.scene.add(dot);
-        this.planetMeshes.push(dot);   // include so it gets cleaned up
+        this.cleanupMeshes.push(dot);
       }
     }
 
+    this.buildAsteroidFlybys();
     this.updateSelectionRing();
   }
 
@@ -210,7 +309,14 @@ export class GalaxyMapThree {
 
     const r   = this.planetRadius(planet.size) + 0.8;
     const geo = new THREE.RingGeometry(r, r + 0.3, 32);
-    const mat = new THREE.MeshBasicMaterial({ color: 0xfacc15, side: THREE.DoubleSide });
+    const mat = new THREE.MeshBasicMaterial({
+      color: 0xfacc15,
+      side: THREE.DoubleSide,
+      transparent: true,
+      opacity: 0.82,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+    });
     this.selectionRing = new THREE.Mesh(geo, mat);
     this.selectionRing.position.set(planet.x, -planet.y, 0.2);
     this.scene.add(this.selectionRing);
@@ -238,6 +344,7 @@ export class GalaxyMapThree {
     const pop     = Math.round(p.population ?? 0);
     const devPct  = p.size > 0 ? Math.min(100, Math.round((pop / p.size) * 100)) : 0;
     const barColor = devPct >= 70 ? '#4ade80' : devPct >= 35 ? '#facc15' : '#f87171';
+    const devLabel = devPct >= 80 ? 'Техноядро' : devPct >= 55 ? 'Промышленный мир' : devPct >= 30 ? 'Колония' : 'Форпост';
     const ownerBadge = p.ownerId
       ? `<span class="gmi-dot" style="background:${p.color}"></span>`
       : '';
@@ -246,6 +353,7 @@ export class GalaxyMapThree {
       <div class="gmi-name">${ownerBadge}${esc(p.name)}</div>
       <div class="gmi-row"><span class="gmi-lbl">Размер</span><span class="gmi-val">${p.size}</span></div>
       <div class="gmi-row"><span class="gmi-lbl">Население</span><span class="gmi-val">${pop}</span></div>
+      <div class="gmi-dev-chip">${devLabel}</div>
       <div class="gmi-bar-label">Развитие <span class="gmi-pct">${devPct}%</span></div>
       <div class="gmi-bar-bg">
         <div class="gmi-bar-fill" style="--target-w:${devPct}%;--bar-color:${barColor}"></div>
@@ -356,6 +464,8 @@ export class GalaxyMapThree {
   }
 
   private handleClick(e: MouseEvent): void {
+    this.onMapClick?.();
+
     const rect = this.renderer.domElement.getBoundingClientRect();
     this.pointer.x =  ((e.clientX - rect.left)  / rect.width)  * 2 - 1;
     this.pointer.y = -((e.clientY - rect.top)   / rect.height) * 2 + 1;
@@ -363,13 +473,14 @@ export class GalaxyMapThree {
     this.raycaster.setFromCamera(this.pointer, this.camera);
 
     // Only test planet meshes (skip dots/rings)
-    const targets = this.planetMeshes.filter(m => m.userData['planet']);
+    const targets = this.planetVisuals.map(visual => visual.mesh);
     const hits    = this.raycaster.intersectObjects(targets);
 
     if (hits.length > 0) {
       const name = hits[0].object.userData['planet'] as string;
       this.selectedName = name;
       this.updateSelectionRing();
+      this.spawnClickPulse(hits[0].point.x, hits[0].point.y);
       this.render();
       this.onPlanetClick?.(name, e.clientX, e.clientY);
     }
@@ -390,18 +501,16 @@ export class GalaxyMapThree {
   }
 
   private animate(dt: number): void {
-    // Rotate each planet on its own axis (different speeds per planet)
-    const planetMeshesWithPlanet = this.planetMeshes.filter(m => m.userData['planet']);
-    for (let i = 0; i < planetMeshesWithPlanet.length; i++) {
-      const mesh = planetMeshesWithPlanet[i]!;
-      // Each planet gets a unique speed based on index
-      const speed = 0.1 + (i % 5) * 0.04;
-      mesh.rotation.y += speed * dt;
-      // Subtle axial tilt wobble
-      mesh.rotation.x = Math.sin(this.clock * 0.2 + i) * 0.08;
+    for (const visual of this.planetVisuals) {
+      visual.mesh.rotation.y += visual.rotationSpeed * dt;
+      visual.mesh.rotation.x = visual.tilt + Math.sin(this.clock * 0.35 + visual.wobbleOffset) * 0.08;
+      visual.halo.rotation.z += (0.05 + visual.rotationSpeed * 0.2) * dt;
+      const haloMat = visual.halo.material as THREE.MeshBasicMaterial;
+      haloMat.opacity = 0.08 + Math.max(0, Math.sin(this.clock * 1.2 + visual.wobbleOffset)) * 0.12;
+      const baseScale = 1 + Math.sin(this.clock * 0.7 + visual.wobbleOffset) * 0.03;
+      visual.halo.scale.set(baseScale, 1 + Math.cos(this.clock * 0.6 + visual.wobbleOffset) * 0.05, 1);
     }
 
-    // Pulse the selection ring
     if (this.selectionRing) {
       const s = 1 + Math.sin(this.clock * 3) * 0.06;
       this.selectionRing.scale.set(s, s, 1);
@@ -410,12 +519,90 @@ export class GalaxyMapThree {
       mat.transparent = true;
     }
 
-    // Star field slow drift + twinkle
     const starMat = this.starField.material as THREE.PointsMaterial;
     starMat.opacity = 0.45 + Math.sin(this.clock * 0.7) * 0.1;
 
-    // Keep info overlay anchored to selected planet (pan/zoom can move it)
+    this.animateAsteroids(dt);
+    this.animateClickPulses(dt);
+
     if (this.selectedPlanet) this.updateOverlayPosition();
+  }
+
+  private animateAsteroids(dt: number): void {
+    for (const asteroid of this.asteroidFlybys) {
+      asteroid.mesh.position.addScaledVector(asteroid.velocity, dt);
+      asteroid.mesh.rotation.x += asteroid.spin.x * dt;
+      asteroid.mesh.rotation.y += asteroid.spin.y * dt;
+      asteroid.mesh.rotation.z += asteroid.spin.z * dt;
+
+      if (asteroid.mesh.position.x > asteroid.bounds) {
+        asteroid.mesh.position.x = -asteroid.bounds;
+      }
+      if (asteroid.mesh.position.y < -asteroid.bounds) {
+        asteroid.mesh.position.y = asteroid.bounds;
+      }
+    }
+  }
+
+  private spawnClickPulse(x: number, y: number): void {
+    const geo = new THREE.RingGeometry(0.35, 0.55, 40);
+    const mat = new THREE.MeshBasicMaterial({
+      color: 0xf8fafc,
+      transparent: true,
+      opacity: 0.9,
+      side: THREE.DoubleSide,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+    });
+    const mesh = new THREE.Mesh(geo, mat);
+    mesh.position.set(x, y, 0.4);
+    this.scene.add(mesh);
+    this.clickPulses.push({ mesh, life: 0, ttl: 0.65 });
+  }
+
+  private animateClickPulses(dt: number): void {
+    for (let i = this.clickPulses.length - 1; i >= 0; i--) {
+      const pulse = this.clickPulses[i]!;
+      pulse.life += dt;
+      const progress = pulse.life / pulse.ttl;
+      pulse.mesh.scale.setScalar(1 + progress * 5.5);
+      pulse.mesh.rotation.z += dt * 0.8;
+      const material = pulse.mesh.material as THREE.MeshBasicMaterial;
+      material.opacity = 1 - progress;
+      if (progress >= 1) {
+        this.scene.remove(pulse.mesh);
+        pulse.mesh.geometry.dispose();
+        material.dispose();
+        this.clickPulses.splice(i, 1);
+      }
+    }
+  }
+
+  private disposeSceneObjects(): void {
+    for (const object of this.cleanupMeshes) {
+      this.scene.remove(object);
+      if (object instanceof THREE.Mesh) {
+        object.geometry.dispose();
+        if (Array.isArray(object.material)) {
+          object.material.forEach(material => material.dispose());
+        } else {
+          object.material.dispose();
+        }
+      }
+    }
+    for (const pulse of this.clickPulses) {
+      this.scene.remove(pulse.mesh);
+      pulse.mesh.geometry.dispose();
+      (pulse.mesh.material as THREE.Material).dispose();
+    }
+    this.cleanupMeshes = [];
+    this.planetVisuals = [];
+    this.clickPulses = [];
+    this.disposeAsteroidFlybys();
+  }
+
+  private disposeAsteroidFlybys(): void {
+    this.asteroidFlybys = [];
   }
 
   private render(): void {

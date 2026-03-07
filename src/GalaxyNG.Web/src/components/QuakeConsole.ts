@@ -18,6 +18,7 @@ const LEVEL_CSS: Record<string, string> = {
  * Subscribes to server-logs SignalR group and streams ALL backend logs.
  */
 export class QuakeConsole {
+  private static activeInstance: QuakeConsole | null = null;
   private overlay: HTMLElement;
   private outputEl: HTMLElement;
   private lines: string[] = [];
@@ -25,6 +26,7 @@ export class QuakeConsole {
   private connected = false;
 
   constructor() {
+    QuakeConsole.activeInstance = this;
     this.overlay  = this.buildDOM();
     this.outputEl = this.overlay.querySelector('.qc-output')!;
     document.body.appendChild(this.overlay);
@@ -41,6 +43,10 @@ export class QuakeConsole {
     });
 
     void this.connectHub();
+  }
+
+  static closeActive(): void {
+    QuakeConsole.activeInstance?.close();
   }
 
   private buildDOM(): HTMLElement {

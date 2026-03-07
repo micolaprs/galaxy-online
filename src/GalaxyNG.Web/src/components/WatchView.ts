@@ -1,10 +1,11 @@
 import { api } from '../api/client.js';
 import { ensureConnected } from '../api/hub.js';
-import type { SpectateData, SpectatePlayer, SpectateBattle, SpectateBombing, BotStatusEvent } from '../types/api.js';
+import type { SpectateData, SpectatePlayer, SpectateBattle, SpectateBombing, BotStatusEvent, TechLevels } from '../types/api.js';
 import { GalaxyMapThree, type ThreePlanet } from './GalaxyMapThree.js';
 import { PlanetPanel } from './PlanetPanel.js';
 import { PlayerHistoryPanel } from './PlayerHistoryPanel.js';
 import { GalaxySummaryPanel } from './GalaxySummaryPanel.js';
+import { QuakeConsole } from './QuakeConsole.js';
 import type { HubConnection } from '@microsoft/signalr';
 
 interface TurnEvent {
@@ -32,6 +33,7 @@ export class WatchView {
   private gameId: string;
   private currentTurn = -1;
   private playerColorMap = new Map<string, string>();
+  private playerTechMap = new Map<string, TechLevels>();
   private turnLog: TurnEvent[] = [];
   private botStatuses = new Map<string, BotStatusEvent>();
   private hub: HubConnection | null = null;
@@ -142,6 +144,11 @@ export class WatchView {
       playersTab, this.gameId, this.playerColorMap, this.botStatuses);
 
     // Galaxy summary panel (lazy init after first data)
+    this.map.onMapClick = () => {
+      this.map.select(null);
+      QuakeConsole.closeActive();
+      this.planetPanel.hide();
+    };
     this.map.onPlanetClick = (name) => this.planetPanel.show(name);
 
     this.el.querySelector('#btn-back')!.addEventListener('click', () => this.onBack?.());
@@ -193,7 +200,9 @@ export class WatchView {
     players.forEach((p, i) => {
       if (!this.playerColorMap.has(p.id))
         this.playerColorMap.set(p.id, PLAYER_COLORS[i % PLAYER_COLORS.length]!);
+      this.playerTechMap.set(p.id, p.tech);
     });
+    this.planetPanel.setPlayerTechMap(this.playerTechMap);
   }
 
   private renderPlayers(data: SpectateData | null): void {
