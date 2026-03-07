@@ -20,27 +20,6 @@ const PLAYER_COLORS = [
   '#a78bfa','#fb923c','#34d399','#e879f9',
 ];
 
-const STATUS_LABEL: Record<string, string> = {
-  idle:             '💤 idle',
-  waiting:          '⏳ waiting',
-  'reading-report': '📖 reading report',
-  thinking:         '🧠 thinking…',
-  validating:       '🔍 validating',
-  submitting:       '📤 submitting',
-  submitted:        '✓ submitted',
-  error:            '❌ error',
-};
-
-const STATUS_CSS: Record<string, string> = {
-  idle:             'idle',
-  waiting:          'waiting',
-  'reading-report': 'active',
-  thinking:         'thinking',
-  validating:       'active',
-  submitting:       'active',
-  submitted:        'submitted',
-  error:            'eliminated',
-};
 
 export class WatchView {
   private el: HTMLElement;
@@ -85,6 +64,12 @@ export class WatchView {
       await this.hub.invoke('JoinGameGroup', this.gameId);
 
       this.hub.on('BotStatusUpdate', (ev: BotStatusEvent) => {
+        // Preserve reasoning text across subsequent status updates (validating → submitting etc.)
+        // Clear it only when a new "reading-report" arrives (new turn)
+        const prev = this.botStatuses.get(ev.raceName);
+        if (!ev.thinking && prev?.thinking && ev.status !== 'reading-report') {
+          ev = { ...ev, thinking: prev.thinking };
+        }
         this.botStatuses.set(ev.raceName, ev);
         if (this.activeRightTab === 'players') this.renderPlayers(this.lastData);
       });
