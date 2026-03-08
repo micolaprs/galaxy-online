@@ -17,8 +17,11 @@ export class GalaxySummaryPanel {
   }
 
   updateTurn(turn: number): void {
-    if (turn !== this.currentTurn) {
-      this.currentTurn = turn;
+    const changed = turn !== this.currentTurn;
+    this.currentTurn = turn;
+
+    // Reload not only on turn switch, but also while summary for current turn is missing.
+    if (changed || !this.summaries.some(s => s.turn === this.currentTurn)) {
       void this.load();
     }
   }
@@ -35,23 +38,31 @@ export class GalaxySummaryPanel {
 
   private render(loading: boolean): void {
     const currentSummary = this.summaries.find(s => s.turn === this.currentTurn);
+    const latestAvailableSummary =
+      currentSummary ??
+      this.summaries
+        .filter(s => s.turn <= this.currentTurn)
+        .sort((a, b) => b.turn - a.turn)[0];
     const summaryByTurn = new Map(this.summaries.map(s => [s.turn, s] as const));
     const historyTurns = Array.from({ length: Math.max(0, this.currentTurn - 1) }, (_, i) => this.currentTurn - 1 - i);
 
+    let openedHistoryItem = false;
     const histHtml = historyTurns.map(turn => {
       const s = summaryByTurn.get(turn);
       const ready = !!s;
       const badge = `<span class="gs-status ${ready ? 'ready' : 'pending'}">${ready ? 'готова' : 'в процессе'}</span>`;
+      const openAttr = !openedHistoryItem ? ' open' : '';
+      openedHistoryItem = true;
       if (!s) {
         return `
-      <details class="gs-history-item">
+      <details class="gs-history-item"${openAttr}>
         <summary class="gs-history-header">Ход ${turn} ${badge}</summary>
         <div class="gs-history-text muted">Сводка для этого хода ещё не сгенерирована.</div>
       </details>
     `;
       }
       return `
-      <details class="gs-history-item">
+      <details class="gs-history-item"${openAttr}>
         <summary class="gs-history-header">Ход ${s.turn} ${badge} <span class="muted">${timeAgo(s.generatedAt)}</span></summary>
         <div class="gs-history-text">${esc(sanitizeUiText(s.summary))}</div>
       </details>
@@ -72,9 +83,9 @@ export class GalaxySummaryPanel {
         </div>
         ${loading
           ? '<div class="gs-loading">Загрузка…</div>'
-          : currentSummary
-            ? `<div class="gs-summary-text">${esc(sanitizeUiText(currentSummary.summary))}</div>
-               <div class="muted gs-gen-time">Сгенерировано ${timeAgo(currentSummary.generatedAt)}</div>`
+          : latestAvailableSummary
+            ? `<div class="gs-summary-text">${esc(sanitizeUiText(latestAvailableSummary.summary))}</div>
+               <div class="muted gs-gen-time">Сгенерировано ${timeAgo(latestAvailableSummary.generatedAt)} (ход ${latestAvailableSummary.turn})</div>`
             : '<div class="gs-empty">Сводка ещё не готова. Попробуй обновить через пару секунд.</div>'
         }
       </div>

@@ -45,7 +45,7 @@ public sealed class LlmService
     {
         var prompt = BuildGalaxySummaryPrompt(game);
         var raw = await CallLlmAsync(
-            "Ты аналитик космической стратегической игры GalaxyNG. Ответ только на русском языке, без разделов размышлений и без служебных тегов.",
+            "Ты аналитик космической стратегической игры GalaxyNG. Ответ только на русском языке, без markdown (без **, списков, заголовков), без разделов размышлений и без служебных тегов.",
             prompt, _maxTokens, ct);
         return UiTextPolicy.Clean(raw, 900);
     }
@@ -59,7 +59,7 @@ public sealed class LlmService
         hist.PlayerOrders.TryGetValue(raceName, out var orders);
         var prompt = BuildTurnSummaryPrompt(raceName, turn, orders ?? "", hist.Battles, hist.Bombings);
         var raw = await CallLlmAsync(
-            "Ты аналитик GalaxyNG. Пиши кратко на русском языке (не более 3-4 предложений), без reasoning/thinking и без служебных блоков.",
+            "Ты аналитик GalaxyNG. Пиши кратко на русском языке (не более 3-4 предложений), без markdown (без **, списков, заголовков), без reasoning/thinking и без служебных блоков.",
             prompt, 512, ct);
         return UiTextPolicy.Clean(raw, 700);
     }

@@ -230,17 +230,19 @@ export class WatchView {
       this.updateMap(data);
       this.renderDiplomacy(data);
 
-      if (data.turn !== this.currentTurn) {
+      const turnChanged = data.turn !== this.currentTurn;
+      if (turnChanged) {
         this.recordTurnEvent(data);
         this.currentTurn = data.turn;
+      }
 
-        // Lazy-init galaxy summary panel on first data
-        const summaryTab = this.el.querySelector<HTMLElement>('#tab-summary')!;
-        if (!this.galaxySummaryPanel) {
-          this.galaxySummaryPanel = new GalaxySummaryPanel(summaryTab, this.gameId, data.turn);
-        } else {
-          this.galaxySummaryPanel.updateTurn(data.turn);
-        }
+      // Keep galaxy summary panel in sync on every refresh,
+      // so delayed summary generation appears without waiting for next turn.
+      const summaryTab = this.el.querySelector<HTMLElement>('#tab-summary')!;
+      if (!this.galaxySummaryPanel) {
+        this.galaxySummaryPanel = new GalaxySummaryPanel(summaryTab, this.gameId, data.turn);
+      } else {
+        this.galaxySummaryPanel.updateTurn(data.turn);
       }
 
       if (data.isFinished) {

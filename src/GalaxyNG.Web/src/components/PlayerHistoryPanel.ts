@@ -37,6 +37,7 @@ export class PlayerHistoryPanel {
   private turnDetail: TurnPlayerOrders | null = null;
   private turnSummary: string | null = null;
   private loadingSummary = false;
+  private summaryPollTimer: number | null = null;
 
   constructor(
     container: HTMLElement,
@@ -113,6 +114,7 @@ export class PlayerHistoryPanel {
   }
 
   private async selectPlayer(race: string): Promise<void> {
+    this.stopSummaryPolling();
     this.selectedRace  = race;
     this.selectedTurn  = null;
     this.turnDetail    = null;
@@ -129,13 +131,23 @@ export class PlayerHistoryPanel {
     `;
     this.el.querySelector('#ph-back-players')!
       .addEventListener('click', () => {
+        this.stopSummaryPolling();
         this.selectedRace = null;
         this.renderPlayerList();
       });
 
     try {
       this.history = await api.getHistory(this.gameId);
-      this.renderTurnList();
+      const latestTurn = this.history
+        .filter(h => h.players.includes(race))
+        .map(h => h.turn)
+        .sort((a, b) => b - a)[0];
+
+      if (typeof latestTurn === 'number') {
+        await this.selectTurn(latestTurn);
+      } else {
+        this.renderTurnList();
+      }
     } catch {
       this.el.querySelector('.ph-loading')!.textContent = 'Ошибка загрузки истории';
     }
@@ -183,6 +195,7 @@ export class PlayerHistoryPanel {
   }
 
   private async selectTurn(turn: number): Promise<void> {
+    this.stopSummaryPolling();
     this.selectedTurn  = turn;
     this.turnDetail    = null;
     this.turnSummary   = null;
@@ -194,6 +207,8 @@ export class PlayerHistoryPanel {
       this.turnDetail = await api.getTurnPlayerOrders(this.gameId, turn, this.selectedRace!);
       if (this.turnDetail.summary && this.turnDetail.summary.trim().length > 0) {
         this.turnSummary = this.turnDetail.summary;
+      } else {
+        this.startSummaryPolling();
       }
       this.renderTurnDetail();
     } catch {
@@ -219,7 +234,11 @@ export class PlayerHistoryPanel {
         <div class="ph-loading">Загрузка…</div>
       `;
       content.querySelector('#ph-back-turns')!
-        .addEventListener('click', () => { this.selectedTurn = null; this.renderTurnList(); });
+        .addEventListener('click', () => {
+          this.stopSummaryPolling();
+          this.selectedTurn = null;
+          this.renderTurnList();
+        });
       return;
     }
 
@@ -271,7 +290,11 @@ export class PlayerHistoryPanel {
     `;
 
     content.querySelector('#ph-back-turns')!
-      .addEventListener('click', () => { this.selectedTurn = null; this.renderTurnList(); });
+      .addEventListener('click', () => {
+        this.stopSummaryPolling();
+        this.selectedTurn = null;
+        this.renderTurnList();
+      });
 
     const genBtn = content.querySelector<HTMLButtonElement>('#ph-gen-summary');
     if (genBtn) {
@@ -287,6 +310,7 @@ export class PlayerHistoryPanel {
     try {
       this.turnSummary = await api.getTurnSummary(
         this.gameId, this.selectedTurn, this.selectedRace!);
+      this.stopSummaryPolling();
     } catch {
       this.turnSummary = 'Не удалось получить сводку от ИИ.';
     }
@@ -299,6 +323,38 @@ export class PlayerHistoryPanel {
     if (content) {
       const loading = content.querySelector('.ph-loading');
       if (loading) loading.textContent = msg;
+    }
+  }
+
+  private startSummaryPolling(): void {
+    if (this.summaryPollTimer !== null || !this.selectedTurn || !this.selectedRace) return;
+    this.summaryPollTimer = window.setInterval(() => {
+      void this.refreshSummaryIfReady();
+    }, 2500);
+  }
+
+  private stopSummaryPolling(): void {
+    if (this.summaryPollTimer !== null) {
+      window.clearInterval(this.summaryPollTimer);
+      this.summaryPollTimer = null;
+    }
+  }
+
+  private async refreshSummaryIfReady(): Promise<void> {
+    if (!this.selectedTurn || !this.selectedRace) {
+      this.stopSummaryPolling();
+      return;
+    }
+    try {
+      const detail = await api.getTurnPlayerOrders(this.gameId, this.selectedTurn, this.selectedRace);
+      if (detail.summary && detail.summary.trim().length > 0) {
+        this.turnDetail = detail;
+        this.turnSummary = detail.summary;
+        this.stopSummaryPolling();
+        this.renderTurnDetail();
+      }
+    } catch {
+      // keep polling silently; explicit errors are handled in manual actions
     }
   }
 }
