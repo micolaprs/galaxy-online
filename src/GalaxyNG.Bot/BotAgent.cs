@@ -337,11 +337,25 @@ public sealed class BotAgent(
             return "";
 
         var normalized = new List<string>();
-        var rawLines = text.Split('\n', StringSplitOptions.RemoveEmptyEntries);
         bool inMessage = false;
 
-        foreach (var raw in rawLines)
+        foreach (var raw in text.Split('\n', StringSplitOptions.RemoveEmptyEntries))
         {
+            // Inside @ blocks: pass lines through as-is (no stripping, no filtering)
+            if (inMessage)
+            {
+                if (raw.Trim().StartsWith("@"))
+                {
+                    normalized.Add(raw.Trim());
+                    inMessage = false;
+                }
+                else
+                {
+                    normalized.Add(raw);
+                }
+                continue;
+            }
+
             var line = raw.Split(';')[0].Trim();
             if (string.IsNullOrWhiteSpace(line))
                 continue;
@@ -349,28 +363,13 @@ public sealed class BotAgent(
             if (line.StartsWith("@"))
             {
                 normalized.Add(line);
-                inMessage = !inMessage;
+                inMessage = true;
                 continue;
             }
 
-            if (inMessage)
-            {
-                normalized.Add(line);
-                continue;
-            }
-
-            // Recover glued commands safely for non-message lines, e.g. "u2p P1 Haulerp P2 MAT"
-            var expanded = Regex.Replace(
-                line,
-                @"(?<=[A-Za-z0-9])(?=[cyn=qnprvmdtesilugbxhjawfo@](?:\d|\s))",
-                "\n");
-
-            foreach (var chunk in expanded.Split('\n', StringSplitOptions.RemoveEmptyEntries))
-            {
-                var cmdLine = NormalizeCompactDesignOrder(NormalizeCompactGroupCommand(chunk.Trim()));
-                if (IsLikelyOrderLine(cmdLine))
-                    normalized.Add(cmdLine);
-            }
+            var cmdLine = NormalizeCompactDesignOrder(NormalizeCompactGroupCommand(line));
+            if (IsLikelyOrderLine(cmdLine))
+                normalized.Add(cmdLine);
         }
 
         return string.Join("\n", normalized).Trim();
