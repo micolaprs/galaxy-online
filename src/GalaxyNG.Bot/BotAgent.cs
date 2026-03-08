@@ -24,6 +24,22 @@ public sealed class BotAgent(
     private bool _retired;
     private string _lastValidationErrors = "";
 
+    private static readonly IReadOnlyList<ToolDefinition> TurnTools =
+    [
+        new ToolDefinition(
+            Name: "validate_orders",
+            Description: "Validate your proposed GalaxyNG orders. Returns 'OK' or a list of errors. Call this before finalizing.",
+            Parameters: new
+            {
+                type = "object",
+                properties = new
+                {
+                    orders = new { type = "string", description = "Orders to validate, one per line" }
+                },
+                required = new[] { "orders" }
+            })
+    ];
+
     public async Task RunTurnAsync(int turn, CancellationToken ct = default)
     {
         await EnsureCommanderProfileAsync(ct);
@@ -114,12 +130,16 @@ public sealed class BotAgent(
             if (attempt > 1 && !string.IsNullOrEmpty(orders))
             {
                 messages.Add(ChatMessage.Assistant(orders));
+                var shipNames = ExtractDesignedShipNames(report);
+                var shipHint = shipNames.Count > 0
+                    ? $"\nREMINDER: Your designed ship names are: {string.Join(", ", shipNames)}. Use these EXACT names in `p` commands — no suffixes or variants."
+                    : "";
                 messages.Add(ChatMessage.User(_lastValidationErrors is { Length: > 0 }
-                    ? $"Those orders had validation errors. Fix them and rewrite ALL orders.\n\n{_lastValidationErrors}"
-                    : "Those orders had validation errors. Fix them and rewrite ALL orders."));
+                    ? $"Those orders had validation errors. Fix them and rewrite ALL orders.\n\n{_lastValidationErrors}{shipHint}"
+                    : $"Those orders had validation errors. Fix them and rewrite ALL orders.{shipHint}"));
             }
 
-            string raw = await CompleteLlmWithTimeoutAsync(messages, $"turn-{turn}-attempt-{attempt}", ct);
+            string raw = await CompleteLlmWithTimeoutAsync(messages, $"turn-{turn}-attempt-{attempt}", ct, TurnTools, ValidateOrdersToolExecutor);
             await thinkingCts.CancelAsync();
             await heartbeat;
 
@@ -572,6 +592,33 @@ public sealed class BotAgent(
         return Regex.IsMatch(report, pattern, RegexOptions.Multiline | RegexOptions.IgnoreCase);
     }
 
+    private static List<string> ExtractDesignedShipNames(string report)
+    {
+        // Parses the YOUR SHIP DESIGNS section: lines like "  Fighter   2  2  2  1  0"
+        var names = new List<string>();
+        bool inSection = false;
+        foreach (var line in report.ReplaceLineEndings("\n").Split('\n'))
+        {
+            if (line.Contains("SHIP DESIGN", StringComparison.OrdinalIgnoreCase))
+            {
+                inSection = true;
+                continue;
+            }
+            if (inSection)
+            {
+                if (string.IsNullOrWhiteSpace(line) || line.TrimStart().StartsWith("YOUR ") || line.TrimStart().StartsWith("==="))
+                {
+                    if (names.Count > 0) break;
+                    continue;
+                }
+                var parts = line.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+                if (parts.Length >= 2 && int.TryParse(parts[1], out _))
+                    names.Add(parts[0]);
+            }
+        }
+        return names;
+    }
+
     private static List<(string Name, double X, double Y)> ParseMyPlanets(string report)
     {
         var lines = report.ReplaceLineEndings("\n").Split('\n');
@@ -997,15 +1044,28 @@ public sealed class BotAgent(
             : fallback;
     }
 
+    private async Task<string> ValidateOrdersToolExecutor(string name, string argsJson)
+    {
+        var args = JsonDocument.Parse(argsJson).RootElement;
+        var orders = args.TryGetProperty("orders", out var o) ? o.GetString() ?? "" : "";
+        var result = await ValidateOrdersAsync(orders, CancellationToken.None);
+        logger.LogInformation("🔧 [{Race}] Tool call: validate_orders → {Result}", config.RaceName, result[..Math.Min(80, result.Length)]);
+        return result;
+    }
+
     private async Task<string> CompleteLlmWithTimeoutAsync(
         IReadOnlyList<ChatMessage> messages,
         string context,
-        CancellationToken ct)
+        CancellationToken ct,
+        IReadOnlyList<ToolDefinition>? tools = null,
+        Func<string, string, Task<string>>? toolExecutor = null)
     {
         using var llmTimeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         llmTimeoutCts.CancelAfter(_llmTimeout);
         try
         {
+            if (tools is not null && toolExecutor is not null)
+                return await llm.CompleteAsync(messages, tools, toolExecutor, llmTimeoutCts.Token);
             return await llm.CompleteAsync(messages, llmTimeoutCts.Token);
         }
         catch (OperationCanceledException) when (!ct.IsCancellationRequested)

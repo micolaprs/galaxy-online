@@ -20,7 +20,7 @@ NUM_BOTS=3
 DO_KILL=true    # по умолчанию: убиваем старые процессы
 DO_CLEAN=false  # по умолчанию: возобновляем последнюю игру
 FORCE_NEW=false # --new: удалить старые и создать новую
-LLM_PROVIDER="${GALAXYNG_BOT_LLM_PROVIDER:-lmstudio}"
+LLM_PROVIDER="${GALAXYNG_BOT_LLM_PROVIDER:-openai/codex}"
 PROVIDER_AUTH_DIR="${GALAXYNG_OPENAI_CODEX_AUTH_DIR:-}"
 MAX_TURNS="${GALAXYNG_DEMO_MAX_TURNS:-60}"  # drives galaxy size (more turns = bigger galaxy)
 
