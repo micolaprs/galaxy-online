@@ -1064,16 +1064,29 @@ public sealed class BotAgent(
         {
             var allies = ParseAlliesFromReport(report);
             var target = context.PrivateContacts
-                .FirstOrDefault(c => !allies.Contains(c, StringComparer.OrdinalIgnoreCase))
+                .Where(c => !allies.Contains(c, StringComparer.OrdinalIgnoreCase))
+                .OrderByDescending(c => ScoreDiplomaticTarget(context.Signals.GetValueOrDefault(c), turn))
+                .FirstOrDefault()
                 ?? context.PrivateContacts[0];
 
+            var signal = context.Signals.GetValueOrDefault(target);
+            if (signal is not null && signal.UnansweredMineStreak >= 3 && signal.LastTurn is int lastTurn && turn - lastTurn < 8)
+                return result;
+
+            var intent = signal is not null && signal.UnansweredMineStreak > 0
+                ? $"Личное сообщение для расы {target}: собеседник молчит уже {signal.UnansweredMineStreak} сообщений подряд. " +
+                  "Учитывай напряжение от игнора: сначала сдержанно, затем жестче, без повтора прежних формулировок."
+                : $"Личное сообщение для расы {target}: дипломатическая игра, блеф или предложение сделки/союза.";
+
             var privateMsg = await GenerateBroadcastMessageAsync(
-                $"Личное сообщение для расы {target}: дипломатическая игра, блеф или предложение сделки/союза.",
+                intent,
                 turn,
                 ct);
             result = AppendPrivateMessage(result, target, privateMsg);
 
-            if (!allies.Contains(target, StringComparer.OrdinalIgnoreCase) && turn % 6 == 0)
+            if (!allies.Contains(target, StringComparer.OrdinalIgnoreCase) &&
+                turn % 6 == 0 &&
+                (signal is null || signal.UnansweredMineStreak < 3))
                 result = $"{result}\na {target} {turn + 8}";
         }
 
@@ -1082,17 +1095,105 @@ public sealed class BotAgent(
 
     private Task<DiplomacyContext?> GetDiplomacyContextAsync(CancellationToken ct)
     {
-        _ = ct;
+        return GetDiplomacyContextInternalAsync(ct);
+    }
+
+    private async Task<DiplomacyContext?> GetDiplomacyContextInternalAsync(CancellationToken ct)
+    {
+        try
+        {
+            var json = await CallMcpToolAsync("get_diplomacy_context", new
+            Dictionary<string, object?>
+            {
+                ["gameId"] = config.GameId,
+                ["raceName"] = config.RaceName,
+                ["password"] = config.Password,
+                ["lookback"] = 40
+            }, ct);
+            using var doc = JsonDocument.Parse(json);
+            if (!doc.RootElement.TryGetProperty("contacts", out var contactsNode) ||
+                contactsNode.ValueKind != JsonValueKind.Array)
+                return BuildFallbackDiplomacyContext();
+
+            var contacts = new List<string>();
+            var signals = new Dictionary<string, PrivateDiplomacySignal>(StringComparer.OrdinalIgnoreCase);
+            foreach (var node in contactsNode.EnumerateArray())
+            {
+                var race = node.TryGetProperty("race", out var raceProp) && raceProp.ValueKind == JsonValueKind.String
+                    ? raceProp.GetString()?.Trim()
+                    : null;
+                if (string.IsNullOrWhiteSpace(race))
+                    continue;
+
+                var channelOpen = node.TryGetProperty("channelOpen", out var openProp) && openProp.ValueKind == JsonValueKind.True;
+                var myMessages = node.TryGetProperty("myMessages", out var myMsgProp) && myMsgProp.TryGetInt32(out var myMsgVal) ? myMsgVal : 0;
+                var theirMessages = node.TryGetProperty("theirMessages", out var theirMsgProp) && theirMsgProp.TryGetInt32(out var theirMsgVal) ? theirMsgVal : 0;
+                var unansweredMineStreak = node.TryGetProperty("unansweredMineStreak", out var streakProp) && streakProp.TryGetInt32(out var streakVal) ? streakVal : 0;
+                var lastSender = node.TryGetProperty("lastSender", out var senderProp) && senderProp.ValueKind == JsonValueKind.String
+                    ? senderProp.GetString()
+                    : null;
+                int? lastTurn = node.TryGetProperty("lastTurn", out var turnProp) && turnProp.TryGetInt32(out var turnVal)
+                    ? turnVal
+                    : null;
+
+                contacts.Add(race);
+                signals[race] = new PrivateDiplomacySignal(
+                    Race: race,
+                    ChannelOpen: channelOpen,
+                    MyMessages: myMessages,
+                    TheirMessages: theirMessages,
+                    UnansweredMineStreak: unansweredMineStreak,
+                    LastSender: lastSender,
+                    LastTurn: lastTurn);
+            }
+
+            var openedContacts = contacts
+                .Where(c => signals.TryGetValue(c, out var s) && s.ChannelOpen)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+            if (openedContacts.Count == 0)
+                return BuildFallbackDiplomacyContext();
+
+            return new DiplomacyContext(openedContacts, signals);
+        }
+        catch (Exception ex)
+        {
+            logger.LogDebug("Could not read diplomacy context from MCP: {Msg}", ex.Message);
+            return BuildFallbackDiplomacyContext();
+        }
+    }
+
+    private DiplomacyContext? BuildFallbackDiplomacyContext()
+    {
         var contacts = _lastStatusRows
             .Where(r => !r.IsEliminated && !r.Name.Equals(config.RaceName, StringComparison.OrdinalIgnoreCase))
             .Select(r => r.Name)
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
 
-        if (contacts.Count == 0)
-            return Task.FromResult<DiplomacyContext?>(null);
+        return contacts.Count == 0
+            ? null
+            : new DiplomacyContext(contacts, new Dictionary<string, PrivateDiplomacySignal>(StringComparer.OrdinalIgnoreCase));
+    }
 
-        return Task.FromResult<DiplomacyContext?>(new DiplomacyContext(contacts));
+    private static int ScoreDiplomaticTarget(PrivateDiplomacySignal? signal, int turn)
+    {
+        if (signal is null)
+            return 5;
+
+        var score = 0;
+        if (signal.ChannelOpen) score += 20;
+        score += Math.Min(12, signal.TheirMessages * 2);
+        score -= Math.Min(15, signal.MyMessages);
+        score -= signal.UnansweredMineStreak * 12;
+        if (signal.LastSender is not null && signal.LastSender.Equals(signal.Race, StringComparison.OrdinalIgnoreCase))
+            score += 10;
+        if (signal.LastTurn is int t)
+        {
+            var age = Math.Max(0, turn - t);
+            score += Math.Min(10, age);
+        }
+        return score;
     }
 
     private async Task EnsureCommanderProfileAsync(CancellationToken ct)
@@ -1724,5 +1825,15 @@ public sealed class BotAgent(
     }
 
     private sealed record DiplomaticMemoryEntry(int Turn, string Text, bool IsSurrender);
-    private sealed record DiplomacyContext(List<string> PrivateContacts);
+    private sealed record DiplomacyContext(
+        List<string> PrivateContacts,
+        Dictionary<string, PrivateDiplomacySignal> Signals);
+    private sealed record PrivateDiplomacySignal(
+        string Race,
+        bool ChannelOpen,
+        int MyMessages,
+        int TheirMessages,
+        int UnansweredMineStreak,
+        string? LastSender,
+        int? LastTurn);
 }

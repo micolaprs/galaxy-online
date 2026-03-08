@@ -69,6 +69,71 @@ public sealed class GameTools(GameService svc)
     }
 
     [McpServerTool, Description(
+        "Get private diplomacy context for your race: currently opened private channels and per-contact messaging signals " +
+        "(last sender, unanswered streak, own/their message counts).")]
+    public async Task<string> GetDiplomacyContext(
+        [Description("Game ID")] string gameId,
+        [Description("Your race name")] string raceName,
+        [Description("Your password")] string password,
+        [Description("How many latest pair messages to analyze")] int lookback = 30,
+        CancellationToken ct = default)
+    {
+        var game = await svc.GetGameAsync(gameId, ct);
+        if (game is null) return """{"error":"game_not_found"}""";
+
+        var me = game.GetPlayer(raceName);
+        if (me is null || me.Password != password)
+            return """{"error":"auth_failed"}""";
+
+        var contacts = new List<object>();
+        foreach (var other in game.Players.Values
+                     .Where(p => !p.IsEliminated && !p.Id.Equals(me.Id, StringComparison.OrdinalIgnoreCase))
+                     .OrderBy(p => p.Name, StringComparer.OrdinalIgnoreCase))
+        {
+            var pairId = BuildPairKey(me.Id, other.Id);
+            var channelOpen = game.IdentifiedContactPairs.Contains(pairId);
+
+            var pairMessages = game.DiplomacyMessages
+                .Where(m => IsPrivatePairMessage(m, me.Id, other.Id))
+                .OrderByDescending(m => m.SentAt)
+                .Take(Math.Max(5, lookback))
+                .OrderBy(m => m.SentAt)
+                .ToList();
+
+            var myMessages = pairMessages.Count(m => m.SenderId.Equals(me.Id, StringComparison.OrdinalIgnoreCase));
+            var theirMessages = pairMessages.Count - myMessages;
+            var last = pairMessages.LastOrDefault();
+            var unansweredMineStreak = 0;
+            for (int i = pairMessages.Count - 1; i >= 0; i--)
+            {
+                if (!pairMessages[i].SenderId.Equals(me.Id, StringComparison.OrdinalIgnoreCase))
+                    break;
+                unansweredMineStreak++;
+            }
+
+            contacts.Add(new
+            {
+                race = other.Name,
+                channelOpen,
+                messageCount = pairMessages.Count,
+                myMessages,
+                theirMessages,
+                unansweredMineStreak,
+                lastSender = last?.SenderName,
+                lastTurn = last?.Turn,
+            });
+        }
+
+        var payload = new
+        {
+            turn = game.Turn,
+            race = me.Name,
+            contacts
+        };
+        return System.Text.Json.JsonSerializer.Serialize(payload);
+    }
+
+    [McpServerTool, Description(
         "Report bot activity status for UI/observer panels (reading-report, thinking, validating, submitted, etc.).")]
     public async Task<string> ReportBotStatus(
         [Description("Game ID")] string gameId,
@@ -183,4 +248,19 @@ public sealed class GameTools(GameService svc)
         double Get(int i) => parts.Length > i && double.TryParse(parts[i], out double v) ? v : 1.0;
         return new TechLevels(Get(0), Get(1), Get(2), Get(3));
     }
+
+    private static bool IsPrivatePairMessage(DiplomacyMessage message, string playerAId, string playerBId)
+    {
+        if (message.RecipientIds.Count == 0)
+            return false;
+
+        var participants = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { message.SenderId };
+        foreach (var recipientId in message.RecipientIds)
+            participants.Add(recipientId);
+
+        return participants.Count == 2 && participants.Contains(playerAId) && participants.Contains(playerBId);
+    }
+
+    private static string BuildPairKey(string a, string b)
+        => string.CompareOrdinal(a, b) <= 0 ? $"{a}:{b}" : $"{b}:{a}";
 }
