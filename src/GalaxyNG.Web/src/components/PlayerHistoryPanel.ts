@@ -232,8 +232,7 @@ export class PlayerHistoryPanel {
 
     // Parse reasoning + orders from either saved history or live LLM response
     const reasoning = sanitizeUiText(d.reasoning || '');
-    const orderLines = (d.orders || '').split('\n')
-      .map(l => l.trim()).filter(Boolean);
+    const orderLines = extractGameCommands(d.orders || '');
     const ordersHtml = orderLines.length
       ? orderLines.map(l => `<div class="ph-order-line">${esc(l)}</div>`).join('')
       : '<div class="ph-event muted">(нет приказов)</div>';
@@ -298,4 +297,20 @@ export class PlayerHistoryPanel {
 
 function esc(s: string): string {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;');
+}
+
+/** Returns only game command lines, stripping @ message blocks. */
+function extractGameCommands(orders: string): string[] {
+  const result: string[] = [];
+  let inMessage = false;
+  for (const raw of orders.split('\n')) {
+    const line = raw.trim();
+    if (!line) continue;
+    if (line.startsWith('@')) {
+      inMessage = !inMessage;
+      continue;
+    }
+    if (!inMessage) result.push(line);
+  }
+  return result;
 }
