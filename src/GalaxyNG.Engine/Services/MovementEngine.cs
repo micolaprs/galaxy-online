@@ -54,6 +54,7 @@ public sealed class MovementEngine
         group.LastRouteOrigin = group.Origin;
         group.LastRouteDestination = destination.Name;
         group.LastRouteTurn = game.Turn;
+        group.LastRouteSpeed = speed;
 
         if (group.Distance <= 0)
         {

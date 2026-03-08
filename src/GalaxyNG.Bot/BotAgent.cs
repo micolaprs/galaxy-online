@@ -17,6 +17,7 @@ public sealed class BotAgent(
     IHttpClientFactory       httpFactory,
     ILogger<BotAgent>        logger)
 {
+    private static readonly TimeSpan LlmTimeout = TimeSpan.FromSeconds(45);
     private CommanderProfile? _commander;
     private readonly List<DiplomaticMemoryEntry> _myDiplomaticHistory = [];
     private bool _retired;
@@ -112,7 +113,7 @@ public sealed class BotAgent(
                 messages.Add(ChatMessage.User("Those orders had validation errors. Please fix and rewrite ALL orders."));
             }
 
-            string raw = await llm.CompleteAsync(messages, ct);
+            string raw = await CompleteLlmWithTimeoutAsync(messages, $"turn-{turn}-attempt-{attempt}", ct);
             await thinkingCts.CancelAsync();
             await heartbeat;
 
@@ -706,7 +707,7 @@ public sealed class BotAgent(
 
         try
         {
-            var response = await llm.CompleteAsync(
+            var response = await CompleteLlmWithTimeoutAsync(
             [
                 ChatMessage.System("""
                     You generate a compact character profile for a space strategy commander.
@@ -715,7 +716,7 @@ public sealed class BotAgent(
                     Keep values short (1 sentence each; commanderName 2-4 words).
                     """),
                 ChatMessage.User($"Race: {config.RaceName}. Create a distinct commander persona in Russian."),
-            ], ct);
+            ], "commander-profile", ct);
 
             var jsonText = TryExtractJsonObject(response);
             if (!string.IsNullOrWhiteSpace(jsonText))
@@ -780,7 +781,7 @@ public sealed class BotAgent(
             ? "(нет прошлых сообщений)"
             : string.Join("\n", _myDiplomaticHistory.TakeLast(8).Select(m => $"- Ход {m.Turn}: {m.Text}"));
 
-        var response = await llm.CompleteAsync(
+        var response = await CompleteLlmWithTimeoutAsync(
         [
             ChatMessage.System($"""
                 Ты пишешь дипломатические сообщения ТОЛЬКО от имени главнокомандующего.
@@ -800,7 +801,7 @@ public sealed class BotAgent(
                 Задача:
                 {intent}
                 """),
-        ], ct);
+        ], $"diplomacy-turn-{turn}", ct);
 
         var message = response.ReplaceLineEndings(" ").Trim();
         if (string.IsNullOrWhiteSpace(message))
@@ -840,6 +841,23 @@ public sealed class BotAgent(
         return root.TryGetProperty(key, out var prop) && prop.ValueKind == JsonValueKind.String
             ? (prop.GetString() ?? fallback)
             : fallback;
+    }
+
+    private async Task<string> CompleteLlmWithTimeoutAsync(
+        IReadOnlyList<ChatMessage> messages,
+        string context,
+        CancellationToken ct)
+    {
+        using var llmTimeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        llmTimeoutCts.CancelAfter(LlmTimeout);
+        try
+        {
+            return await llm.CompleteAsync(messages, llmTimeoutCts.Token);
+        }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+        {
+            throw new TimeoutException($"LLM timeout in {context} after {LlmTimeout.TotalSeconds:F0}s");
+        }
     }
 
     private sealed record PlanetSnapshot(string Name, double X, double Y, string? OwnerId);

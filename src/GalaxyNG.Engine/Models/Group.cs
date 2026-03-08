@@ -16,6 +16,7 @@ public sealed class Group
     public string?           LastRouteOrigin { get; set; }
     public string?           LastRouteDestination { get; set; }
     public int               LastRouteTurn { get; set; }
+    public double            LastRouteSpeed { get; set; }
 
     // Cargo
     public string?  CargoType   { get; set; }   // CAP | COL | MAT | null

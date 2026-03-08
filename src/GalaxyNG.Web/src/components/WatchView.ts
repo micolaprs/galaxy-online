@@ -285,6 +285,8 @@ export class WatchView {
           fleetName: route.fleetName,
           ships: route.ships,
           active: route.active ?? true,
+          speed: typeof route.speed === 'number' ? route.speed : undefined,
+          progress: typeof route.progress === 'number' ? route.progress : undefined,
         };
       })
       .filter((route): route is ThreeFleetRoute => route !== null);

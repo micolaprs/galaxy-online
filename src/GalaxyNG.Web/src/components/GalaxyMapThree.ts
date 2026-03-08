@@ -24,6 +24,8 @@ export interface ThreeFleetRoute {
   fleetName?: string;
   ships?: number;
   active?: boolean;
+  speed?: number;
+  progress?: number;
 }
 
 const STAR_COUNT = 800;
@@ -54,13 +56,13 @@ interface ClickPulse {
 
 interface FleetRouteVisual {
   route: ThreeFleetRoute;
-  baseLine: THREE.Line;
-  glowBand: THREE.Mesh;
+  traveledLine: THREE.Line;
+  remainingLine: THREE.Line;
+  remainingGlow: THREE.Mesh;
   laneDots: THREE.Points;
-  runners: THREE.Mesh[];
+  ship: THREE.Group;
   start: THREE.Vector3;
   end: THREE.Vector3;
-  speed: number;
 }
 
 export class GalaxyMapThree {
@@ -337,44 +339,57 @@ export class GalaxyMapThree {
     for (const route of this.fleetRoutes) {
       const start = new THREE.Vector3(route.x1, -route.y1, -0.04);
       const end = new THREE.Vector3(route.x2, -route.y2, -0.04);
-      const points = [start, end];
+      const progress = this.routeProgress(route.progress);
+      const shipPos = new THREE.Vector3().lerpVectors(start, end, progress);
 
-      const baseGeometry = new THREE.BufferGeometry().setFromPoints(points);
-      const baseMaterial = new THREE.LineBasicMaterial({
+      const traveledGeometry = new THREE.BufferGeometry().setFromPoints([start, shipPos]);
+      const traveledMaterial = new THREE.LineBasicMaterial({
         color: this.hexColor(route.color),
         transparent: true,
-        opacity: 0.32,
+        opacity: 0.15,
       });
-      const baseLine = new THREE.Line(baseGeometry, baseMaterial);
-      baseLine.userData['fleetRoute'] = route;
-      this.scene.add(baseLine);
-      this.cleanupMeshes.push(baseLine);
+      const traveledLine = new THREE.Line(traveledGeometry, traveledMaterial);
+      traveledLine.userData['fleetRoute'] = route;
+      this.scene.add(traveledLine);
+      this.cleanupMeshes.push(traveledLine);
+
+      const remainingGeometry = new THREE.BufferGeometry().setFromPoints([shipPos, end]);
+      const remainingMaterial = new THREE.LineBasicMaterial({
+        color: this.hexColor(route.color),
+        transparent: true,
+        opacity: 0.52,
+      });
+      const remainingLine = new THREE.Line(remainingGeometry, remainingMaterial);
+      remainingLine.userData['fleetRoute'] = route;
+      this.scene.add(remainingLine);
+      this.cleanupMeshes.push(remainingLine);
 
       const dir = new THREE.Vector3().subVectors(end, start);
       const length = dir.length();
-      const routeMid = new THREE.Vector3().addVectors(start, end).multiplyScalar(0.5);
-      const bandGeo = new THREE.PlaneGeometry(length, 0.95);
+      const remainingLength = Math.max(0.001, length * (1 - progress));
+      const remainingMid = new THREE.Vector3().lerpVectors(shipPos, end, 0.5);
+      const bandGeo = new THREE.PlaneGeometry(remainingLength, 0.95);
       const bandMat = new THREE.MeshBasicMaterial({
         color: this.hexColor(route.color),
         transparent: true,
-        opacity: 0.22,
+        opacity: 0.28,
         blending: THREE.AdditiveBlending,
         depthWrite: false,
         side: THREE.DoubleSide,
       });
-      const glowBand = new THREE.Mesh(bandGeo, bandMat);
-      glowBand.userData['fleetRoute'] = route;
-      glowBand.position.set(routeMid.x, routeMid.y, 0.03);
-      glowBand.rotation.z = Math.atan2(dir.y, dir.x);
-      this.scene.add(glowBand);
-      this.cleanupMeshes.push(glowBand);
+      const remainingGlow = new THREE.Mesh(bandGeo, bandMat);
+      remainingGlow.userData['fleetRoute'] = route;
+      remainingGlow.position.set(remainingMid.x, remainingMid.y, 0.03);
+      remainingGlow.rotation.z = Math.atan2(dir.y, dir.x);
+      this.scene.add(remainingGlow);
+      this.cleanupMeshes.push(remainingGlow);
 
       const dotPositions = new Float32Array(ROUTE_POINT_COUNT * 3);
       const laneGeometry = new THREE.BufferGeometry();
       laneGeometry.setAttribute('position', new THREE.BufferAttribute(dotPositions, 3));
       const laneMaterial = new THREE.PointsMaterial({
         color: this.hexColor(route.color),
-        size: 6,
+        size: 5,
         sizeAttenuation: false,
         transparent: true,
         opacity: 0.95,
@@ -387,35 +402,20 @@ export class GalaxyMapThree {
       this.scene.add(laneDots);
       this.cleanupMeshes.push(laneDots);
 
-      const runners: THREE.Mesh[] = [];
-      for (let i = 0; i < 3; i++) {
-        const runnerGeo = new THREE.ConeGeometry(0.45, 1.1, 10);
-        const runnerMat = new THREE.MeshBasicMaterial({
-          color: this.hexColor(route.color),
-          transparent: true,
-          opacity: 0.95,
-          blending: THREE.AdditiveBlending,
-          depthWrite: false,
-        });
-        const runner = new THREE.Mesh(runnerGeo, runnerMat);
-        runner.userData['fleetRoute'] = route;
-        runner.position.copy(start);
-        runner.position.z = 0.14;
-        runner.rotation.z = Math.atan2(dir.y, dir.x) - Math.PI / 2;
-        this.scene.add(runner);
-        this.cleanupMeshes.push(runner);
-        runners.push(runner);
-      }
+      const ship = this.createFleetShip(route);
+      ship.position.set(shipPos.x, shipPos.y, 0.22);
+      this.scene.add(ship);
+      this.cleanupMeshes.push(ship);
 
       this.routeVisuals.push({
         route,
-        baseLine,
-        glowBand,
+        traveledLine,
+        remainingLine,
+        remainingGlow,
         laneDots,
-        runners,
+        ship,
         start,
         end,
-        speed: 0.35 + Math.random() * 0.25,
       });
     }
   }
@@ -618,10 +618,10 @@ export class GalaxyMapThree {
 
     const fleetTargets: THREE.Object3D[] = [];
     for (const rv of this.routeVisuals) {
-      fleetTargets.push(rv.glowBand, rv.baseLine, rv.laneDots, ...rv.runners);
+      fleetTargets.push(rv.traveledLine, rv.remainingLine, rv.remainingGlow, rv.laneDots, rv.ship);
     }
     this.raycaster.params.Line!.threshold = 1.2;
-    this.raycaster.params.Points!.threshold = 1.2;
+    this.raycaster.params.Points!.threshold = 10;
     const fleetHits = this.raycaster.intersectObjects(fleetTargets, true);
     const fleetRoute = fleetHits.find(h => h.object.userData['fleetRoute'])?.object.userData['fleetRoute'] as ThreeFleetRoute | undefined;
     if (fleetRoute) {
@@ -680,70 +680,153 @@ export class GalaxyMapThree {
       const to = route.end;
       const dx = to.x - from.x;
       const dy = to.y - from.y;
-      const phase = (this.clock * route.speed) % 1;
+      const progress = this.routeProgress(route.route.progress);
       const routeShown = this.shouldShowRoute(route.route);
+      const shipX = from.x + dx * progress;
+      const shipY = from.y + dy * progress;
 
       for (let i = 0; i < ROUTE_POINT_COUNT; i++) {
-        const t = ((i / ROUTE_POINT_COUNT) + phase) % 1;
+        const t = progress + ((i + 1) / (ROUTE_POINT_COUNT + 1)) * (1 - progress);
         attrs.setXYZ(i, from.x + dx * t, from.y + dy * t, 0.08);
       }
       attrs.needsUpdate = true;
 
-      const runnerT = phase;
-      for (let i = 0; i < route.runners.length; i++) {
-        const runner = route.runners[i]!;
-        const offset = (i / route.runners.length) * 0.42;
-        const t = (runnerT + offset) % 1;
-        runner.position.set(from.x + dx * t, from.y + dy * t, 0.14);
-        runner.visible = routeShown;
-      }
+      route.ship.position.set(shipX, shipY, 0.22);
+      route.ship.rotation.z = Math.atan2(dy, dx);
 
-      const baseMat = route.baseLine.material as THREE.LineBasicMaterial;
-      const glowMat = route.glowBand.material as THREE.MeshBasicMaterial;
+      const traveledAttr = route.traveledLine.geometry.getAttribute('position') as THREE.BufferAttribute;
+      traveledAttr.setXYZ(0, from.x, from.y, -0.04);
+      traveledAttr.setXYZ(1, shipX, shipY, -0.04);
+      traveledAttr.needsUpdate = true;
+
+      const remainingAttr = route.remainingLine.geometry.getAttribute('position') as THREE.BufferAttribute;
+      remainingAttr.setXYZ(0, shipX, shipY, -0.04);
+      remainingAttr.setXYZ(1, to.x, to.y, -0.04);
+      remainingAttr.needsUpdate = true;
+
+      const totalLength = Math.hypot(dx, dy);
+      const remainingLength = Math.max(0.001, totalLength * (1 - progress));
+      route.remainingGlow.geometry.dispose();
+      route.remainingGlow.geometry = new THREE.PlaneGeometry(remainingLength, 0.95);
+      route.remainingGlow.position.set((shipX + to.x) / 2, (shipY + to.y) / 2, 0.03);
+      route.remainingGlow.rotation.z = Math.atan2(dy, dx);
+
+      const traveledMat = route.traveledLine.material as THREE.LineBasicMaterial;
+      const remainingMat = route.remainingLine.material as THREE.LineBasicMaterial;
+      const glowMat = route.remainingGlow.material as THREE.MeshBasicMaterial;
       const laneMat = route.laneDots.material as THREE.PointsMaterial;
       if (routeShown) {
-        const blink = (Math.sin(this.clock * 6 + route.speed * 11) + 1) / 2;
+        const blinkSpeed = this.routeBlinkSpeed(route.route.speed);
+        const blink = (Math.sin(this.clock * blinkSpeed) + 1) / 2;
         const activeFactor = route.route.active === false ? 0.45 : 1;
-        baseMat.opacity = (0.35 + blink * 0.55) * activeFactor; // bright race-colored blinking route line
-        glowMat.opacity = (0.18 + blink * 0.34) * activeFactor;
-        laneMat.opacity = (0.45 + blink * 0.5) * activeFactor;
-        for (const runner of route.runners) {
-          const runnerMat = runner.material as THREE.MeshBasicMaterial;
-          runnerMat.opacity = (0.45 + blink * 0.55) * activeFactor;
-          runner.scale.setScalar((0.8 + blink * 0.65) * (route.route.active === false ? 0.8 : 1));
-        }
+        traveledMat.opacity = (0.06 + blink * 0.08) * activeFactor;
+        remainingMat.opacity = (0.25 + blink * 0.42) * activeFactor;
+        glowMat.opacity = (0.15 + blink * 0.33) * activeFactor;
+        laneMat.opacity = (0.22 + blink * 0.3) * activeFactor;
+
+        const pulse = 0.92 + blink * 0.24;
+        const fleetScale = this.fleetScale(route.route.ships) * pulse * (route.route.active === false ? 0.85 : 1);
+        route.ship.scale.setScalar(fleetScale);
       } else {
-        baseMat.opacity = 0;
+        traveledMat.opacity = 0;
+        remainingMat.opacity = 0;
         glowMat.opacity = 0;
         laneMat.opacity = 0;
-        for (const runner of route.runners) {
-          const runnerMat = runner.material as THREE.MeshBasicMaterial;
-          runnerMat.opacity = 0;
-        }
       }
+
+      route.ship.visible = routeShown;
     }
   }
 
   private updateRouteVisibility(): void {
     for (const route of this.routeVisuals) {
       const shown = this.shouldShowRoute(route.route);
-      route.baseLine.visible = shown;
-      route.glowBand.visible = shown;
+      route.traveledLine.visible = shown;
+      route.remainingLine.visible = shown;
+      route.remainingGlow.visible = shown;
       route.laneDots.visible = shown;
-      route.runners.forEach(r => r.visible = shown);
+      route.ship.visible = shown;
 
-      const baseMat = route.baseLine.material as THREE.LineBasicMaterial;
-      const glowMat = route.glowBand.material as THREE.MeshBasicMaterial;
+      const traveledMat = route.traveledLine.material as THREE.LineBasicMaterial;
+      const remainingMat = route.remainingLine.material as THREE.LineBasicMaterial;
+      const glowMat = route.remainingGlow.material as THREE.MeshBasicMaterial;
       const laneMat = route.laneDots.material as THREE.PointsMaterial;
       const activeFactor = route.route.active === false ? 0.45 : 1;
-      baseMat.opacity = shown ? 0.7 * activeFactor : 0;
-      glowMat.opacity = shown ? 0.35 * activeFactor : 0;
-      laneMat.opacity = shown ? 0.9 * activeFactor : 0;
-      route.runners.forEach(r => {
-        const mat = r.material as THREE.MeshBasicMaterial;
-        mat.opacity = shown ? 0.95 * activeFactor : 0;
-      });
+      traveledMat.opacity = shown ? 0.12 * activeFactor : 0;
+      remainingMat.opacity = shown ? 0.54 * activeFactor : 0;
+      glowMat.opacity = shown ? 0.28 * activeFactor : 0;
+      laneMat.opacity = shown ? 0.42 * activeFactor : 0;
     }
+  }
+
+  private routeProgress(progress?: number): number {
+    if (typeof progress !== 'number' || Number.isNaN(progress)) return 0;
+    return Math.max(0, Math.min(1, progress));
+  }
+
+  private routeBlinkSpeed(fleetSpeed?: number): number {
+    const safe = Math.max(0.2, fleetSpeed ?? 1);
+    return Math.min(2.6, 0.65 + safe * 0.18);
+  }
+
+  private fleetScale(ships?: number): number {
+    const safeShips = Math.max(1, ships ?? 1);
+    return Math.min(2.8, 0.6 + Math.sqrt(safeShips) * 0.12);
+  }
+
+  private createFleetShip(route: ThreeFleetRoute): THREE.Group {
+    const ship = new THREE.Group();
+    const hullColor = this.hexColor(route.color);
+    const wingColor = 0xe2e8f0;
+
+    const hullGeo = new THREE.ConeGeometry(0.42, 1.6, 12);
+    hullGeo.rotateX(Math.PI / 2);
+    const hullMat = new THREE.MeshPhongMaterial({
+      color: hullColor,
+      emissive: hullColor,
+      emissiveIntensity: 0.25,
+      shininess: 70,
+    });
+    const hull = new THREE.Mesh(hullGeo, hullMat);
+    hull.position.z = 0.2;
+    ship.add(hull);
+
+    const cockpitGeo = new THREE.SphereGeometry(0.2, 12, 10);
+    const cockpitMat = new THREE.MeshPhongMaterial({
+      color: 0xffffff,
+      emissive: 0x93c5fd,
+      emissiveIntensity: 0.5,
+      transparent: true,
+      opacity: 0.92,
+    });
+    const cockpit = new THREE.Mesh(cockpitGeo, cockpitMat);
+    cockpit.position.set(0, 0.25, 0.28);
+    ship.add(cockpit);
+
+    const wingGeo = new THREE.BoxGeometry(1.25, 0.12, 0.36);
+    const wingMat = new THREE.MeshPhongMaterial({
+      color: wingColor,
+      emissive: 0x475569,
+      emissiveIntensity: 0.25,
+      shininess: 40,
+    });
+    const wing = new THREE.Mesh(wingGeo, wingMat);
+    wing.position.z = 0.16;
+    ship.add(wing);
+
+    const engineGeo = new THREE.SphereGeometry(0.13, 10, 8);
+    const engineMat = new THREE.MeshBasicMaterial({
+      color: 0x38bdf8,
+      transparent: true,
+      opacity: 0.9,
+    });
+    const engine = new THREE.Mesh(engineGeo, engineMat);
+    engine.position.set(0, -0.72, 0.16);
+    ship.add(engine);
+
+    ship.scale.setScalar(this.fleetScale(route.ships));
+    ship.traverse(obj => { obj.userData['fleetRoute'] = route; });
+    return ship;
   }
 
   private shouldShowRoute(route: ThreeFleetRoute): boolean {
@@ -807,12 +890,18 @@ export class GalaxyMapThree {
   private disposeSceneObjects(): void {
     for (const object of this.cleanupMeshes) {
       this.scene.remove(object);
-      if (object instanceof THREE.Mesh) {
-        object.geometry.dispose();
-        if (Array.isArray(object.material)) {
-          object.material.forEach(material => material.dispose());
+      const disposable = object as THREE.Object3D & {
+        geometry?: { dispose: () => void };
+        material?: THREE.Material | THREE.Material[];
+      };
+      if (disposable.geometry) {
+        disposable.geometry.dispose();
+      }
+      if (disposable.material) {
+        if (Array.isArray(disposable.material)) {
+          disposable.material.forEach(material => material.dispose());
         } else {
-          object.material.dispose();
+          disposable.material.dispose();
         }
       }
     }

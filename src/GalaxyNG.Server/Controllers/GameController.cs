@@ -128,14 +128,35 @@ public sealed class GameController(GameService svc) : ControllerBase
                      && !string.IsNullOrWhiteSpace(g.LastRouteDestination)
                      && !string.Equals(g.LastRouteOrigin, g.LastRouteDestination, StringComparison.OrdinalIgnoreCase)
                      && game.Turn - g.LastRouteTurn <= 4))
-                .Select(g => new
+                .Select(g =>
                 {
-                    ownerId = p.Id,
-                    fleetName = string.IsNullOrWhiteSpace(g.FleetName) ? $"Group {g.Number}" : g.FleetName!,
-                    origin = g.InHyperspace ? g.Origin! : g.LastRouteOrigin!,
-                    destination = g.InHyperspace ? g.Destination! : g.LastRouteDestination!,
-                    ships = g.Ships,
-                    active = g.InHyperspace,
+                    var origin = g.InHyperspace ? g.Origin! : g.LastRouteOrigin!;
+                    var destination = g.InHyperspace ? g.Destination! : g.LastRouteDestination!;
+
+                    var totalDistance = 0.0;
+                    if (game.Planets.TryGetValue(origin, out var op) && game.Planets.TryGetValue(destination, out var dp))
+                        totalDistance = op.DistanceTo(dp);
+
+                    var remainingDistance = g.InHyperspace ? Math.Max(0, g.Distance) : 0;
+                    var progress = totalDistance > 0
+                        ? Math.Clamp(1 - (remainingDistance / totalDistance), 0, 1)
+                        : 1;
+
+                    var speed = p.ShipTypes.TryGetValue(g.ShipTypeName, out var st)
+                        ? st.SpeedLoaded(g.Tech.Drive, g.Tech.Cargo, g.CargoLoad)
+                        : g.LastRouteSpeed;
+
+                    return new
+                    {
+                        speed,
+                        progress,
+                        ownerId = p.Id,
+                        fleetName = string.IsNullOrWhiteSpace(g.FleetName) ? $"Group {g.Number}" : g.FleetName!,
+                        origin,
+                        destination,
+                        ships = g.Ships,
+                        active = g.InHyperspace,
+                    };
                 }))
             .GroupBy(r => new { r.ownerId, r.fleetName, r.origin, r.destination, r.active })
             .Select(g => new
@@ -146,6 +167,8 @@ public sealed class GameController(GameService svc) : ControllerBase
                 g.Key.destination,
                 ships = g.Sum(x => x.ships),
                 active = g.Key.active,
+                speed = g.Sum(x => x.speed * Math.Max(1, x.ships)) / Math.Max(1, g.Sum(x => Math.Max(1, x.ships))),
+                progress = g.Sum(x => x.progress * Math.Max(1, x.ships)) / Math.Max(1, g.Sum(x => Math.Max(1, x.ships))),
             })
             .ToList();
 
