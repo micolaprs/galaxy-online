@@ -9,16 +9,19 @@ public sealed class GalaxyGenerator(Random? rng = null)
 
     // Fighter reference: drive=2, attacks=2, weapons=2, shields=1, cargo=0
     //   mass = 2+2+1+max(0,2-1)×1 = 6; speed = 20×1×2/6 ≈ 6.667 u/turn
-    // gs = maxTurns × FighterSpeed × sqrt(playerCount / BreakEvenPlayers)
-    // At BreakEvenPlayers (5) the galaxy is exactly crossable in maxTurns:
-    //   3p, 60t→310  4p, 60t→358  5p, 60t→400  6p, 60t→438
-    private const double FighterSpeed     = 20.0 * 2 / 6;  // ~6.667 u/turn
-    private const int    BreakEvenPlayers = 5;
+    // We intentionally target earlier contact than "crossable in maxTurns":
+    //   gs = maxTurns × FighterSpeed × ContactWindowShare × sqrt(playerCount / BaselinePlayers)
+    // Typical defaults:
+    //   3p, 30t→125  3p, 60t→249  5p, 60t→322  6p, 60t→353
+    private const double FighterSpeed      = 20.0 * 2 / 6;  // ~6.667 u/turn
+    private const double ContactWindowShare = 0.72;
+    private const int    BaselinePlayers   = 4;
 
     public static GalaxyGeneratorOptions DefaultOptions(int playerCount, int maxTurns = 60)
     {
-        double gs = Math.Round(maxTurns * FighterSpeed * Math.Sqrt(Math.Max(1, playerCount) / (double)BreakEvenPlayers));
-        gs = Math.Max(gs, 80);  // absolute minimum
+        double gs = Math.Round(maxTurns * FighterSpeed * ContactWindowShare *
+                               Math.Sqrt(Math.Max(1, playerCount) / (double)BaselinePlayers));
+        gs = Math.Max(gs, 70);  // absolute minimum
         return new()
         {
             GalaxySize    = gs,

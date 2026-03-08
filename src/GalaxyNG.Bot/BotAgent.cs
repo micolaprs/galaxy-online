@@ -19,6 +19,8 @@ public sealed class BotAgent(
 {
     private readonly TimeSpan _llmTimeout = TimeSpan.FromSeconds(Math.Clamp(config.LlmTimeoutSeconds, 30, 300));
     private readonly ILoggerFactory _loggerFactory = loggerFactory;
+    private readonly BotStrategy _strategy = BotStrategyCatalog.PickForBot(config.GameId, config.RaceName, config.StrategyId);
+    private string SystemPrompt => StrategyPrompt.BuildSystemPrompt(_strategy);
     private CommanderProfile? _commander;
     private readonly List<DiplomaticMemoryEntry> _myDiplomaticHistory = [];
     private bool _sentInitialGreeting;
@@ -148,8 +150,9 @@ public sealed class BotAgent(
 
             var messages = new List<ChatMessage>
             {
-                ChatMessage.System(StrategyPrompt.System),
+                ChatMessage.System(SystemPrompt),
                 ChatMessage.System(BuildCommanderInstruction()),
+                ChatMessage.User(BotStrategyCatalog.BuildStrategyUserHint(_strategy)),
                 ChatMessage.User(BuildDynamicTokenHint(_turnToolContext)),
                 ChatMessage.User(BuildJsonOutputContractHint()),
                 ChatMessage.User($"## Turn Report\n\n{report}\n\nProvide your orders for this turn."),
@@ -246,6 +249,8 @@ public sealed class BotAgent(
     public async Task RunLoopAsync(CancellationToken ct = default)
     {
         int lastTurn = -1;
+        logger.LogInformation("🧩 [{Race}] Стратегия бота: {StrategyId} — {StrategyName}",
+            config.RaceName, _strategy.Id, _strategy.Name);
         logger.LogInformation("🚀 [{Race}] Бот подключился к игре {Game}", config.RaceName, config.GameId);
         await PostBotStatusAsync("idle", "ожидание первого хода", ct);
 
@@ -1094,7 +1099,14 @@ public sealed class BotAgent(
                     commanderName, shortBackstory, coreTraits, diplomaticTone, signaturePhrase.
                     Keep values short (1 sentence each; commanderName 2-4 words).
                     """),
-                ChatMessage.User($"Race: {config.RaceName}. Create a distinct commander persona in Russian."),
+                ChatMessage.User($"""
+                    Race: {config.RaceName}.
+                    Strategy: {_strategy.Name} ({_strategy.Id})
+                    Strategy cues:
+                    {_strategy.CommanderCues}
+
+                    Create a distinct commander persona in Russian aligned with this strategic doctrine.
+                    """),
             ], "commander-profile", ct);
 
             var jsonText = TryExtractJsonObject(response);
@@ -1116,7 +1128,7 @@ public sealed class BotAgent(
             logger.LogDebug("Could not generate commander profile from LLM: {Msg}", ex.Message);
         }
 
-        _commander ??= CommanderProfile.Fallback(config.RaceName);
+        _commander ??= CommanderProfile.Fallback(config.RaceName, _strategy.Id);
     }
 
     private Task RefreshMyDiplomaticHistoryAsync(CancellationToken ct)
@@ -1143,6 +1155,8 @@ public sealed class BotAgent(
                 - Характер: {profile.CoreTraits}
                 - Тон: {profile.DiplomaticTone}
                 - Фирменная фраза: {profile.SignaturePhrase}
+                - Стратегия: {_strategy.Name} ({_strategy.Id})
+                - Стратегические акценты: {_strategy.CommanderCues}
                 Пиши коротко (1 предложение, максимум 140 символов), без markdown, без списка приказов и без символа ';'.
                 """),
             ChatMessage.User($"""
@@ -1662,12 +1676,13 @@ public sealed class BotAgent(
 
     private string BuildCommanderInstruction()
     {
-        var profile = _commander ?? CommanderProfile.Fallback(config.RaceName);
+        var profile = _commander ?? CommanderProfile.Fallback(config.RaceName, _strategy.Id);
         var history = _myDiplomaticHistory.Count == 0
             ? "none"
             : string.Join(" | ", _myDiplomaticHistory.TakeLast(5).Select(m => $"T{m.Turn}:{m.Text}"));
 
         return $"You are Supreme Commander {profile.CommanderName} of race {config.RaceName}. " +
+               $"Strategic doctrine: {_strategy.Name} ({_strategy.Id}). " +
                $"Backstory: {profile.ShortBackstory}. " +
                $"Leadership traits: {profile.CoreTraits}. " +
                $"Diplomatic style: {profile.DiplomaticTone}. " +
@@ -1682,9 +1697,9 @@ public sealed class BotAgent(
         string DiplomaticTone,
         string SignaturePhrase)
     {
-        public static CommanderProfile Fallback(string raceName)
+        public static CommanderProfile Fallback(string raceName, string strategyId)
         {
-            var idx = Math.Abs(StringComparer.OrdinalIgnoreCase.GetHashCode(raceName)) % 6;
+            var idx = Math.Abs(StringComparer.OrdinalIgnoreCase.GetHashCode($"{raceName}:{strategyId}")) % 6;
             return idx switch
             {
                 0 => new CommanderProfile("Архонт Велаар", "Ветеран приграничных конфликтов и мастер оборонительных кампаний.", "осторожный, расчётливый, дисциплинированный", "сдержанный и прагматичный", "Канал подтверждён."),

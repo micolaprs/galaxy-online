@@ -27,6 +27,7 @@ var host = Host.CreateDefaultBuilder(args)
             RaceName  = cfg["Bot:RaceName"]  ?? throw new InvalidOperationException("Bot:RaceName required"),
             Password  = cfg["Bot:Password"]  ?? throw new InvalidOperationException("Bot:Password required"),
             ServerUrl = cfg["Bot:ServerUrl"] ?? "http://localhost:5000",
+            StrategyId = cfg["Bot:StrategyId"],
             Llm = llmConfig,
         };
 
