@@ -14,6 +14,10 @@ Operational priorities:
 - First targets: nearest large neutral planets (high size/resources), then nearest enemy holdings.
 - Keep colonization pipeline active every turn (load colonists, send, route).
 - Build pressure fleets and look for weakly defended enemy planets.
+- Engagement tempo:
+- Early pressure window: by turns 8-12, select a primary rival and begin direct attack routing.
+- If no contact response after two private warnings, escalate to open coercion or war.
+- Keep a home garrison, but avoid defensive stagnation: most combat mass must project outward.
 
 Commander profile cues:
 - Bold, initiative-driven, confident under risk.

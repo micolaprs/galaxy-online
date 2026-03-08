@@ -32,10 +32,18 @@ public static class StrategyPrompt
            - Build Fighters early enough to contest space by midgame.
            - Send combat groups toward enemy approaches and vulnerable enemy planets.
            - Do not stay passive if fleet power allows pressure.
+           - If your race already has contact and rival planets are known, convert intent into actual combat routing.
         4. Diplomacy posture:
            - If strategy is aggressive: use coercive diplomacy, short deals, early conflict.
            - If strategy is balanced: use transactional alliances, then strike when advantageous.
            - If strategy is diplomatic/industrial: secure safety with alliances before major wars.
+        5. Anti-passivity requirements (mandatory):
+           - Do not converge into pure mirror-economy behavior with other races.
+           - If alien planets are known in report, include active military pressure plan (war prep, strike routing, or war declaration).
+           - Keep at least one meaningful combat garrison on core/home planets; do not leave core industry completely unguarded.
+           - By midgame, your orders should include a clear conflict trajectory against at least one rival.
+           - Midgame standard: maintain Fighter production on at least one core world, unless your economy is critically collapsing.
+           - War declarations must be backed by fleet motion; avoid empty symbolic wars.
 
         Canonical command syntax (one per line):
         p <planet> <CAP|MAT|DRIVE|WEAPONS|SHIELDS|CARGO|shiptype>

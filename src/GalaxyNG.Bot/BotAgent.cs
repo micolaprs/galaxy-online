@@ -802,26 +802,66 @@ public sealed class BotAgent(
         var snapshots = new Dictionary<string, PlanetSnapshot>(StringComparer.OrdinalIgnoreCase);
 
         foreach (var p in ParseMyPlanets(report))
-            snapshots[p.Name] = new PlanetSnapshot(p.Name, p.X, p.Y, OwnerKnown: true, IsUninhabited: false);
+            snapshots[p.Name] = new PlanetSnapshot(
+                Name: p.Name, X: p.X, Y: p.Y,
+                OwnerKnown: true, IsUninhabited: false, IsAlien: false, OwnerRace: null);
 
         var lines = report.ReplaceLineEndings("\n").Split('\n');
+        var inAlien = false;
+        var inUninhabited = false;
         var inSection = false;
         foreach (var raw in lines)
         {
             var line = raw.Trim();
+            if (line.StartsWith("= ALIEN PLANETS", StringComparison.OrdinalIgnoreCase))
+            {
+                inAlien = true;
+                inUninhabited = false;
+                inSection = false;
+                continue;
+            }
             if (line.StartsWith("= UNINHABITED PLANETS", StringComparison.OrdinalIgnoreCase))
             {
+                inAlien = false;
+                inUninhabited = true;
                 inSection = true;
                 continue;
             }
 
-            if (inSection && line.StartsWith("="))
-                break;
-            if (!inSection || string.IsNullOrWhiteSpace(line))
+            if ((inAlien || inUninhabited || inSection) && line.StartsWith("="))
+            {
+                inAlien = false;
+                inUninhabited = false;
+                inSection = false;
+                continue;
+            }
+            if (string.IsNullOrWhiteSpace(line))
                 continue;
 
-            var m = Regex.Match(line, @"^(?<name>\S+)\s+X:(?<x>-?\d+(?:\.\d+)?)\s+Y:(?<y>-?\d+(?:\.\d+)?)\b",
-                RegexOptions.IgnoreCase);
+            if (inAlien)
+            {
+                var mAlien = Regex.Match(line,
+                    @"^(?<name>\S+)\s+\((?<owner>[^)]+)\)\s+X:(?<x>-?\d+(?:\.\d+)?)\s+Y:(?<y>-?\d+(?:\.\d+)?)\b",
+                    RegexOptions.IgnoreCase);
+                if (!mAlien.Success)
+                    continue;
+
+                if (!double.TryParse(mAlien.Groups["x"].Value, NumberStyles.Any, CultureInfo.InvariantCulture, out var ax) ||
+                    !double.TryParse(mAlien.Groups["y"].Value, NumberStyles.Any, CultureInfo.InvariantCulture, out var ay))
+                    continue;
+
+                var alienName = mAlien.Groups["name"].Value;
+                var owner = mAlien.Groups["owner"].Value.Trim();
+                snapshots[alienName] = new PlanetSnapshot(
+                    Name: alienName, X: ax, Y: ay,
+                    OwnerKnown: true, IsUninhabited: false, IsAlien: true, OwnerRace: owner);
+                continue;
+            }
+
+            if (!inUninhabited && !inSection)
+                continue;
+
+            var m = Regex.Match(line, @"^(?<name>\S+)\s+X:(?<x>-?\d+(?:\.\d+)?)\s+Y:(?<y>-?\d+(?:\.\d+)?)\b", RegexOptions.IgnoreCase);
             if (!m.Success)
                 continue;
 
@@ -830,11 +870,14 @@ public sealed class BotAgent(
                 continue;
 
             var name = m.Groups["name"].Value;
-            snapshots[name] = new PlanetSnapshot(name, x, y, OwnerKnown: true, IsUninhabited: true);
+            snapshots[name] = new PlanetSnapshot(
+                Name: name, X: x, Y: y,
+                OwnerKnown: true, IsUninhabited: true, IsAlien: false, OwnerRace: null);
         }
 
         return snapshots.Values.ToList();
     }
+
 
     private static List<StatusRow> ParseStatusRowsFromReport(string report)
     {
@@ -1002,6 +1045,7 @@ public sealed class BotAgent(
 
         return allies;
     }
+
 
     private string BuildSurrenderOrders(CheckpointDecision checkpoint)
     {
@@ -1770,7 +1814,14 @@ public sealed class BotAgent(
         }
     }
 
-    private sealed record PlanetSnapshot(string Name, double X, double Y, bool OwnerKnown, bool IsUninhabited);
+    private sealed record PlanetSnapshot(
+        string Name,
+        double X,
+        double Y,
+        bool OwnerKnown,
+        bool IsUninhabited,
+        bool IsAlien,
+        string? OwnerRace);
     private sealed record PlayerCheckpointStat(string Name, int PlanetCount, bool IsEliminated, double TechPower);
     private sealed record StatusRow(string Name, int PlanetCount, bool IsEliminated, double TechPower);
     private sealed record GameStateSnapshot(int Turn, bool IsFinished, bool MySubmitted, string? WinnerName);

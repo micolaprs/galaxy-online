@@ -14,6 +14,10 @@ Operational priorities:
 - Prioritize nearest large neutral planets and routes that shorten travel to enemy worlds.
 - Split production between capital growth and Fighters.
 - Probe enemy borders, then commit when local superiority is likely.
+- Engagement tempo:
+- Consolidate first, but by turns 12-18 commit to one concrete rival pressure line.
+- Use diplomacy to delay one rival while concentrating force against another.
+- Maintain non-zero home defense while still sending regular offensive groups.
 
 Commander profile cues:
 - Pragmatic and calm, prefers reliable plans.

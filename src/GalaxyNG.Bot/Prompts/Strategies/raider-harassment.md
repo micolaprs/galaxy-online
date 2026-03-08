@@ -14,6 +14,10 @@ Operational priorities:
 - Scout and strike weakly defended enemy-adjacent planets.
 - Keep a lighter economy footprint but high operational tempo.
 - Use split groups to threaten multiple routes and stretch defenses.
+- Engagement tempo:
+- By turns 8-12 start recurring raid cycles against enemy logistics and border worlds.
+- Use messages to unsettle opponents, then follow with real fleet motion (not empty rhetoric).
+- Keep minimum home guard, but prioritize initiative and repeated contact battles.
 
 Commander profile cues:
 - Opportunistic, adaptive, psychologically pressuring.
