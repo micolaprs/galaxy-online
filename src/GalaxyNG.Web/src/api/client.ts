@@ -1,6 +1,6 @@
 import type {
   CreateGameResponse, GameDetail, GameSummary, Session, SpectateData,
-  PlanetDetail, TurnHistoryEntry, TurnPlayerOrders, AiSummaryEntry,
+  PlanetDetail, TurnHistoryEntry, TurnPlayerOrders, AiSummaryEntry, FinalGameReport,
 } from '../types/api.js';
 
 export class ApiClient {
@@ -101,6 +101,10 @@ export class ApiClient {
 
   async runTurn(gameId: string): Promise<void> {
     await this.post(`/api/games/${gameId}/run-turn`, {});
+  }
+
+  async getFinalReport(gameId: string): Promise<FinalGameReport> {
+    return this.get(`/api/games/${gameId}/final-report`);
   }
 
   // ---- Helpers ----

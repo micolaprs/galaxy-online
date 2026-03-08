@@ -44,7 +44,8 @@ public static class StrategyPrompt
         - `attacks=0` means no attack slots (pure speed/cargo). Only set attacks>0 if weapons>0.
         - **NEVER redirect a group that is already en route** (distance > 0). Let it reach its destination. Redirecting mid-flight wastes turns. Only issue `s` for groups sitting on a planet (distance = 0).
         - Planet names that do not appear in your report DO NOT EXIST. Never invent planet names.
-        - **`p <planet> <type>`**: `<type>` must be EXACTLY one of: CAP MAT DRIVE WEAPONS SHIELDS CARGO — or the EXACT ship name from YOUR SHIP DESIGNS (e.g. "Fighter", NEVER "FighterP", "FighterL3", "FighterPro" or any other variant). Copy the name letter-for-letter.
+        - **`p <planet> <type>`**: `<type>` must be EXACTLY one of: CAP MAT DRIVE WEAPONS SHIELDS CARGO — or the EXACT ship name from YOUR SHIP DESIGNS. Copy the name letter-for-letter.
+        - Never append suffixes or extra characters to ship names, cargo names, or planet names.
 
         ### Colonization sequence (CRITICAL — do this every turn):
         1. Load colonists onto a Hauler:  `l <group#> COL`

@@ -6,6 +6,9 @@ export interface GameSummary {
   turn: number;
   playerCount: number;
   lastTurnRunAt: string | null;
+  maxTurns?: number;
+  isFinished?: boolean;
+  winnerName?: string | null;
 }
 
 export interface GameDetail {
@@ -109,6 +112,31 @@ export interface SpectateFleetRoute {
   active?: boolean;
   speed?: number;
   progress?: number;
+}
+
+export interface FinalRaceResult {
+  playerId: string;
+  race: string;
+  isWinner: boolean;
+  isEliminated: boolean;
+  planets: number;
+  population: number;
+  industry: number;
+  ships: number;
+  techTotal: number;
+  achievements: string[];
+}
+
+export interface FinalGameReport {
+  gameId: string;
+  gameName: string;
+  finishedTurn: number;
+  maxTurns: number;
+  winnerPlayerId?: string | null;
+  winnerName?: string | null;
+  finishReason?: string | null;
+  races: FinalRaceResult[];
+  timeline: string[];
 }
 
 // Bot real-time status (via SignalR)

@@ -514,6 +514,109 @@ input:focus { outline: none; border-color: var(--accent); }
 .wv-tab-content { display: none; flex: 1; overflow-y: auto; flex-direction: column; }
 .wv-tab-content.active { display: flex; }
 
+.wv-final-overlay {
+  position: absolute;
+  inset: 0;
+  background: rgba(3, 8, 20, 0.72);
+  z-index: 25;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 18px;
+}
+
+.wv-final-overlay.hidden { display: none; }
+
+.wv-final-modal {
+  width: min(980px, 96vw);
+  max-height: 84vh;
+  background: #111a2d;
+  border: 1px solid #2c3f63;
+  border-radius: 8px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.55);
+  display: flex;
+  flex-direction: column;
+}
+
+.wv-final-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 14px;
+  border-bottom: 1px solid #2c3f63;
+}
+
+.wv-final-title { color: #9dd7ff; font-size: 13px; font-weight: 700; }
+
+.wv-final-body {
+  overflow: auto;
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.wv-final-meta {
+  background: #0d1527;
+  border: 1px solid #233353;
+  border-radius: 6px;
+  padding: 10px 12px;
+  color: var(--text);
+  line-height: 1.6;
+}
+
+.wv-final-table-wrap {
+  border: 1px solid #233353;
+  border-radius: 6px;
+  overflow: auto;
+}
+
+.wv-final-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.wv-final-table th {
+  text-align: left;
+  color: var(--muted);
+  background: #0d1527;
+  border-bottom: 1px solid #233353;
+  padding: 8px 10px;
+  white-space: nowrap;
+}
+
+.wv-final-table td {
+  padding: 8px 10px;
+  border-bottom: 1px solid #1b2b49;
+  vertical-align: top;
+}
+
+.wv-final-table tbody tr.winner {
+  background: rgba(74, 222, 128, 0.08);
+}
+
+.wv-final-story {
+  border: 1px solid #233353;
+  border-radius: 6px;
+  background: #0d1527;
+  padding: 10px 12px;
+}
+
+.wv-final-story-title {
+  color: #d6f1ff;
+  font-weight: 700;
+  margin-bottom: 8px;
+}
+
+.wv-final-story ul {
+  margin-left: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  line-height: 1.45;
+}
+
 /* ---- Planet Panel (3D overlay) ---- */
 .planet-panel {
   position: absolute; bottom: 20px; left: 20px;

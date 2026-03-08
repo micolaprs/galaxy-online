@@ -2,7 +2,7 @@ import { api } from '../api/client.js';
 import { ensureConnected } from '../api/hub.js';
 import type {
   SpectateData, SpectatePlayer, SpectateBattle, SpectateBombing,
-  BotStatusEvent, TechLevels, SpectateChatMessage, SpectatePrivateChat,
+  BotStatusEvent, TechLevels, SpectateChatMessage, SpectatePrivateChat, FinalGameReport,
 } from '../types/api.js';
 import { GalaxyMapThree, type ThreeFleetRoute, type ThreePlanet } from './GalaxyMapThree.js';
 import { PlanetPanel } from './PlanetPanel.js';
@@ -47,6 +47,8 @@ export class WatchView {
   private showAllRoutes = true;
   private routeFocusPlanet: string | null = null;
   private activeFleetRoute: ThreeFleetRoute | null = null;
+  private finalReport: FinalGameReport | null = null;
+  private finalReportAutoOpened = false;
 
   onBack?: () => void;
 
@@ -102,6 +104,7 @@ export class WatchView {
           <span class="wv-turn"  id="wv-turn"></span>
           <span class="wv-ago"   id="wv-ago"></span>
           <div class="wv-topbar-spacer"></div>
+          <button class="btn btn-sm btn-secondary" id="btn-final-report" style="display:none">Итоги</button>
           <button class="btn btn-sm btn-warning" id="btn-run-turn">▶ Ход</button>
         </div>
         <div class="wv-body">
@@ -138,6 +141,15 @@ export class WatchView {
               </div>
             </div>
           </div>
+        </div>
+      </div>
+      <div class="wv-final-overlay hidden" id="wv-final-overlay">
+        <div class="wv-final-modal">
+          <div class="wv-final-head">
+            <div class="wv-final-title" id="wv-final-title">Итоги партии</div>
+            <button class="btn-close" id="wv-final-close">×</button>
+          </div>
+          <div class="wv-final-body" id="wv-final-body"></div>
         </div>
       </div>
     `;
@@ -188,6 +200,11 @@ export class WatchView {
 
     this.el.querySelector('#btn-back')!.addEventListener('click', () => this.onBack?.());
     this.el.querySelector('#btn-run-turn')!.addEventListener('click', () => void this.runTurn());
+    this.el.querySelector('#btn-final-report')!.addEventListener('click', () => this.openFinalReport());
+    this.el.querySelector('#wv-final-close')!.addEventListener('click', () => this.closeFinalReport());
+    this.el.querySelector('#wv-final-overlay')!.addEventListener('click', (ev) => {
+      if (ev.target === ev.currentTarget) this.closeFinalReport();
+    });
     this.el.querySelector('#wv-dip-toggle')!.addEventListener('click', () => this.toggleDiplomacyChat());
     this.el.querySelector('#wv-route-toggle')!.addEventListener('click', () => {
       this.showAllRoutes = !this.showAllRoutes;
@@ -225,6 +242,10 @@ export class WatchView {
           this.galaxySummaryPanel.updateTurn(data.turn);
         }
       }
+
+      if (data.isFinished) {
+        await this.ensureFinalReportLoaded(!this.finalReportAutoOpened);
+      }
     } catch (e) {
       this.el.querySelector('#wv-title')!.textContent = `Ошибка: ${e}`;
     }
@@ -237,6 +258,8 @@ export class WatchView {
       data.lastTurnRunAt ? `ход ${timeAgo(data.lastTurnRunAt)}` : 'ходов нет';
     this.el.querySelector<HTMLButtonElement>('#btn-run-turn')!.style.display =
       data.autoRunOnAllSubmitted ? 'none' : '';
+    this.el.querySelector<HTMLButtonElement>('#btn-final-report')!.style.display =
+      data.isFinished ? '' : 'none';
   }
 
   private updatePlayerColors(players: SpectatePlayer[]): void {
@@ -422,6 +445,78 @@ export class WatchView {
     panel.classList.add('hidden');
     panel.innerHTML = '';
     this.activeFleetRoute = null;
+  }
+
+  private async ensureFinalReportLoaded(autoOpen: boolean): Promise<void> {
+    if (!this.finalReport) {
+      this.finalReport = await api.getFinalReport(this.gameId);
+      this.renderFinalReport();
+    }
+    if (autoOpen) {
+      this.finalReportAutoOpened = true;
+      this.openFinalReport();
+    }
+  }
+
+  private renderFinalReport(): void {
+    const body = this.el.querySelector<HTMLElement>('#wv-final-body');
+    const title = this.el.querySelector<HTMLElement>('#wv-final-title');
+    if (!body || !title || !this.finalReport) return;
+    const r = this.finalReport;
+    title.textContent = `Итоги: ${r.gameName} (${r.gameId})`;
+
+    const rows = r.races.map(row => `
+      <tr class="${row.isWinner ? 'winner' : ''}">
+        <td>${esc(row.race)}</td>
+        <td>${row.planets}</td>
+        <td>${row.population.toFixed(1)}</td>
+        <td>${row.industry.toFixed(1)}</td>
+        <td>${row.ships}</td>
+        <td>${row.techTotal.toFixed(2)}</td>
+        <td>${esc(row.achievements.join(' • '))}</td>
+      </tr>
+    `).join('');
+
+    const timeline = r.timeline.map(line => `<li>${esc(sanitizeUiText(line))}</li>`).join('');
+    body.innerHTML = `
+      <div class="wv-final-meta">
+        <strong>Победитель:</strong> ${esc(r.winnerName ?? 'не определён')}<br/>
+        <strong>Финиш:</strong> ход ${r.finishedTurn} из ${r.maxTurns}<br/>
+        <strong>Причина:</strong> ${esc(r.finishReason ?? '—')}
+      </div>
+      <div class="wv-final-table-wrap">
+        <table class="wv-final-table">
+          <thead>
+            <tr>
+              <th>Раса</th>
+              <th>Планеты</th>
+              <th>Население</th>
+              <th>Индустрия</th>
+              <th>Флот</th>
+              <th>Тех</th>
+              <th>Достижения</th>
+            </tr>
+          </thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
+      <div class="wv-final-story">
+        <div class="wv-final-story-title">История партии</div>
+        <ul>${timeline}</ul>
+      </div>
+    `;
+  }
+
+  private openFinalReport(): void {
+    const overlay = this.el.querySelector<HTMLElement>('#wv-final-overlay');
+    if (!overlay) return;
+    overlay.classList.remove('hidden');
+  }
+
+  private closeFinalReport(): void {
+    const overlay = this.el.querySelector<HTMLElement>('#wv-final-overlay');
+    if (!overlay) return;
+    overlay.classList.add('hidden');
   }
 }
 

@@ -387,6 +387,94 @@ public sealed class GameController(GameService svc) : ControllerBase
                   : BadRequest(new { error });
     }
 
+    // GET /api/games/{id}/final-report — final results for completed games
+    [HttpGet("{id}/final-report")]
+    public async Task<IActionResult> GetFinalReport(string id, CancellationToken ct)
+    {
+        var game = await svc.GetGameAsync(id, ct);
+        if (game is null) return NotFound();
+        if (!game.IsFinished)
+            return BadRequest(new { error = "Game is not finished yet." });
+
+        var players = game.Players.Values.ToList();
+        var stats = players
+            .Select(p =>
+            {
+                var owned = game.PlanetsOwnedBy(p.Id).ToList();
+                var ships = p.Groups.Sum(g => g.Ships);
+                var population = owned.Sum(pl => pl.Population);
+                var industry = owned.Sum(pl => pl.Industry);
+                var techTotal = p.Tech.Drive + p.Tech.Weapons + p.Tech.Shields + p.Tech.Cargo;
+                return new
+                {
+                    p.Id,
+                    p.Name,
+                    p.IsEliminated,
+                    PlanetCount = owned.Count,
+                    Population = population,
+                    Industry = industry,
+                    Ships = ships,
+                    TechTotal = techTotal,
+                };
+            })
+            .ToList();
+
+        var battleWins = BuildBattleWins(game, players.Select(p => p.Name).ToList());
+        var bombings = BuildBombingCounts(game, players.Select(p => p.Name).ToList());
+
+        var ecoLeader = stats.OrderByDescending(s => s.Industry).ThenByDescending(s => s.Population).FirstOrDefault();
+        var techLeader = stats.OrderByDescending(s => s.TechTotal).FirstOrDefault();
+        var fleetLeader = stats.OrderByDescending(s => s.Ships).FirstOrDefault();
+        var colonyLeader = stats.OrderByDescending(s => s.PlanetCount).FirstOrDefault();
+        var battleLeader = battleWins.Count > 0 ? battleWins.OrderByDescending(x => x.Value).FirstOrDefault() : default;
+        var bombingLeader = bombings.Count > 0 ? bombings.OrderByDescending(x => x.Value).FirstOrDefault() : default;
+
+        var raceRows = stats
+            .OrderByDescending(s => s.Id == game.WinnerPlayerId)
+            .ThenByDescending(s => s.PlanetCount)
+            .ThenByDescending(s => s.Industry)
+            .Select(s => new
+            {
+                playerId = s.Id,
+                race = s.Name,
+                isWinner = s.Id == game.WinnerPlayerId,
+                s.IsEliminated,
+                planets = s.PlanetCount,
+                population = Math.Round(s.Population, 1),
+                industry = Math.Round(s.Industry, 1),
+                ships = s.Ships,
+                techTotal = Math.Round(s.TechTotal, 2),
+                achievements = BuildAchievements(
+                    s.Name,
+                    s.Id == game.WinnerPlayerId,
+                    s.IsEliminated,
+                    ecoLeader?.Name,
+                    techLeader?.Name,
+                    fleetLeader?.Name,
+                    colonyLeader?.Name,
+                    battleLeader.Key,
+                    battleLeader.Value,
+                    bombingLeader.Key,
+                    bombingLeader.Value),
+            })
+            .ToList();
+
+        var timeline = BuildTimeline(game);
+
+        return Ok(new
+        {
+            gameId = game.Id,
+            gameName = game.Name,
+            finishedTurn = game.Turn,
+            game.MaxTurns,
+            winnerPlayerId = game.WinnerPlayerId,
+            winnerName = game.WinnerName,
+            finishReason = game.FinishReason,
+            races = raceRows,
+            timeline,
+        });
+    }
+
     // POST /api/games/{id}/bot-status — bot reports its current activity
     [HttpPost("{id}/bot-status")]
     public async Task<IActionResult> PostBotStatus(
@@ -518,6 +606,113 @@ public sealed class GameController(GameService svc) : ControllerBase
             participants.Add(recipientId);
 
         return participants.Count == 2 && participants.Contains(playerAId) && participants.Contains(playerBId);
+    }
+
+    private static Dictionary<string, int> BuildBattleWins(Game game, List<string> playerNames)
+    {
+        var wins = playerNames.ToDictionary(name => name, _ => 0, StringComparer.OrdinalIgnoreCase);
+        foreach (var entry in game.TurnHistory)
+        {
+            foreach (var battle in entry.Battles)
+            {
+                foreach (var race in playerNames)
+                {
+                    if (battle.Contains($"→ {race} побеждает", StringComparison.OrdinalIgnoreCase))
+                    {
+                        wins[race]++;
+                        break;
+                    }
+                }
+            }
+        }
+
+        return wins;
+    }
+
+    private static Dictionary<string, int> BuildBombingCounts(Game game, List<string> playerNames)
+    {
+        var counts = playerNames.ToDictionary(name => name, _ => 0, StringComparer.OrdinalIgnoreCase);
+        foreach (var entry in game.TurnHistory)
+        {
+            foreach (var bombing in entry.Bombings)
+            {
+                foreach (var race in playerNames.OrderByDescending(n => n.Length))
+                {
+                    if (bombing.StartsWith($"{race} бомбардировал", StringComparison.OrdinalIgnoreCase))
+                    {
+                        counts[race]++;
+                        break;
+                    }
+                }
+            }
+        }
+
+        return counts;
+    }
+
+    private static List<string> BuildAchievements(
+        string race,
+        bool isWinner,
+        bool isEliminated,
+        string? ecoLeader,
+        string? techLeader,
+        string? fleetLeader,
+        string? colonyLeader,
+        string? battleLeader,
+        int battleWins,
+        string? bombingLeader,
+        int bombingCount)
+    {
+        var result = new List<string>();
+        if (isWinner) result.Add("Победитель партии");
+        if (isEliminated) result.Add("Выбыл до финала");
+        if (string.Equals(race, ecoLeader, StringComparison.OrdinalIgnoreCase)) result.Add("Экономический лидер");
+        if (string.Equals(race, techLeader, StringComparison.OrdinalIgnoreCase)) result.Add("Технологический лидер");
+        if (string.Equals(race, fleetLeader, StringComparison.OrdinalIgnoreCase)) result.Add("Сильнейший флот");
+        if (string.Equals(race, colonyLeader, StringComparison.OrdinalIgnoreCase)) result.Add("Колониальная доминация");
+        if (battleWins > 0 && string.Equals(race, battleLeader, StringComparison.OrdinalIgnoreCase))
+            result.Add($"Победы в битвах: {battleWins}");
+        if (bombingCount > 0 && string.Equals(race, bombingLeader, StringComparison.OrdinalIgnoreCase))
+            result.Add($"Главный бомбардировщик: {bombingCount}");
+        if (result.Count == 0) result.Add("Стабильная кампания");
+        return result;
+    }
+
+    private static List<string> BuildTimeline(Game game)
+    {
+        var lines = new List<string>
+        {
+            $"Партия «{game.Name}» стартовала с {game.Players.Count} рас и завершилась на ходу {game.Turn}.",
+            game.WinnerName is { Length: > 0 }
+                ? $"Победитель: {game.WinnerName}. Причина завершения: {game.FinishReason ?? "стандартное завершение"}."
+                : $"Партия завершена. Причина: {game.FinishReason ?? "стандартное завершение"}."
+        };
+
+        var hotTurns = game.TurnHistory
+            .Select(h => new
+            {
+                h.Turn,
+                Intensity = h.Battles.Count + h.Bombings.Count,
+                h.Battles,
+                h.Bombings
+            })
+            .Where(h => h.Intensity > 0)
+            .OrderByDescending(h => h.Intensity)
+            .ThenByDescending(h => h.Turn)
+            .Take(4)
+            .OrderBy(h => h.Turn)
+            .ToList();
+
+        foreach (var t in hotTurns)
+        {
+            var battleText = t.Battles.Count > 0 ? $"битвы: {t.Battles.Count}" : "";
+            var bombingText = t.Bombings.Count > 0 ? $"бомбардировки: {t.Bombings.Count}" : "";
+            var joined = string.Join(", ", new[] { battleText, bombingText }.Where(x => x.Length > 0));
+            var sample = t.Battles.FirstOrDefault() ?? t.Bombings.FirstOrDefault() ?? "";
+            lines.Add($"Ход {t.Turn}: {joined}. {sample}");
+        }
+
+        return lines;
     }
 }
 

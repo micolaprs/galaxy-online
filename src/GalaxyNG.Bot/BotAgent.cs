@@ -23,9 +23,31 @@ public sealed class BotAgent(
     private bool _sentInitialGreeting;
     private bool _retired;
     private string _lastValidationErrors = "";
+    private TurnToolContext? _turnToolContext;
 
     private static readonly IReadOnlyList<ToolDefinition> TurnTools =
     [
+        new ToolDefinition(
+            Name: "get_turn_context",
+            Description: "Get canonical, current-turn tokens for orders: planet names, ship names, allowed production and cargo values.",
+            Parameters: new
+            {
+                type = "object",
+                properties = new { },
+                required = Array.Empty<string>()
+            }),
+        new ToolDefinition(
+            Name: "design_ship",
+            Description: "Return canonical design command for a requested template role (scout, hauler, fighter).",
+            Parameters: new
+            {
+                type = "object",
+                properties = new
+                {
+                    role = new { type = "string", description = "scout | hauler | fighter" }
+                },
+                required = new[] { "role" }
+            }),
         new ToolDefinition(
             Name: "validate_orders",
             Description: "Validate your proposed GalaxyNG orders. Returns 'OK' or a list of errors. Call this before finalizing.",
@@ -60,6 +82,7 @@ public sealed class BotAgent(
         int reportLines = report.Split('\n').Length;
         logger.LogInformation("📋 [{Race}] Отчёт получен ({Lines} строк)", config.RaceName, reportLines);
         await RefreshMyDiplomaticHistoryAsync(ct);
+        _turnToolContext = await BuildTurnToolContextAsync(turn, report, ct);
 
         var checkpoint = await EvaluateCheckpointDecisionAsync(turn, report, ct);
         if (checkpoint.ShouldSurrender)
@@ -124,6 +147,8 @@ public sealed class BotAgent(
             {
                 ChatMessage.System(StrategyPrompt.System),
                 ChatMessage.System(BuildCommanderInstruction()),
+                ChatMessage.User(BuildDynamicTokenHint(_turnToolContext)),
+                ChatMessage.User(BuildJsonOutputContractHint()),
                 ChatMessage.User($"## Turn Report\n\n{report}\n\nProvide your orders for this turn."),
             };
 
@@ -139,20 +164,40 @@ public sealed class BotAgent(
                     : $"Those orders had validation errors. Fix them and rewrite ALL orders.{shipHint}"));
             }
 
-            string raw = await CompleteLlmWithTimeoutAsync(messages, $"turn-{turn}-attempt-{attempt}", ct, TurnTools, ValidateOrdersToolExecutor);
+            string raw = await CompleteLlmWithTimeoutAsync(messages, $"turn-{turn}-attempt-{attempt}", ct, TurnTools, TurnToolExecutor);
             await thinkingCts.CancelAsync();
             await heartbeat;
 
             // Broadcast the full LLM response (reasoning + orders) to the UI
             await PostBotStatusAsync("thinking", $"ход {turn}, попытка {attempt}/3 — ответ получен", raw, ct);
 
-            orders = NormalizeOrders(ExtractOrders(raw));
+            var extracted = ExtractOrdersFromStructuredOrText(raw, out var usedJson);
+            orders = NormalizeOrders(extracted);
             if (!string.IsNullOrWhiteSpace(checkpoint.ContinueMessage))
                 orders = AppendGlobalMessage(orders, checkpoint.ContinueMessage);
             orders = await AppendDynamicDiplomacyAsync(orders, turn, report, ct);
+            orders = CanonicalizeOrdersWithTurnContext(orders, _turnToolContext, out var canonicalFixes);
+            orders = EnforceCommandWhitelist(orders, _turnToolContext, out var rewrittenByPreflight, out var droppedByPreflight);
+            if (rewrittenByPreflight > 0 || droppedByPreflight > 0)
+            {
+                logger.LogInformation("🧱 [{Race}] Preflight: rewritten={Rewritten}, dropped={Dropped}",
+                    config.RaceName, rewrittenByPreflight, droppedByPreflight);
+            }
+            if (!ValidateOrdersAgainstTurnContext(orders, _turnToolContext, out var semanticError))
+            {
+                _lastValidationErrors = semanticError;
+                logger.LogWarning("⚠️ [{Race}] Локальная проверка контекста не пройдена (попытка {Attempt}): {Error}",
+                    config.RaceName, attempt, semanticError);
+                continue;
+            }
+            if (canonicalFixes > 0)
+            {
+                logger.LogInformation("🛠️ [{Race}] Автоканонизация исправила {Count} токен(ов) в приказах",
+                    config.RaceName, canonicalFixes);
+            }
             int orderLines = orders.Split('\n', StringSplitOptions.RemoveEmptyEntries).Length;
-            logger.LogInformation("📝 [{Race}] LLM составил {Lines} приказов (из {Total} знаков ответа)",
-                config.RaceName, orderLines, raw.Length);
+            logger.LogInformation("📝 [{Race}] LLM составил {Lines} приказов (из {Total} знаков ответа, json={Json})",
+                config.RaceName, orderLines, raw.Length, usedJson);
 
             if (!ValidateOrderSyntax(orders, out var syntaxError))
             {
@@ -343,33 +388,69 @@ public sealed class BotAgent(
         }
     }
 
-    private static string ExtractOrders(string llmResponse)
+    private static string ExtractOrdersFromStructuredOrText(string llmResponse, out bool usedJson)
     {
-        // Parse the structured response format:
-        // REASONING: ...
-        // ORDERS:
-        // <orders>
-        var lines  = llmResponse.ReplaceLineEndings("\n").Split('\n');
-        bool inOrders = false;
-        var  result   = new List<string>();
+        usedJson = false;
+        var json = TryExtractJsonObject(llmResponse);
+        if (string.IsNullOrWhiteSpace(json))
+            return "";
 
-        foreach (var line in lines)
+        try
         {
-            if (line.Trim().StartsWith("ORDERS:", StringComparison.OrdinalIgnoreCase))
-            {
-                inOrders = true;
-                continue;
-            }
-            if (inOrders)
-            {
-                var trimmed = line.Trim();
-                if (trimmed.StartsWith("```"))
-                    continue;
-                result.Add(line);
-            }
-        }
+            using var doc = JsonDocument.Parse(json);
+            var root = doc.RootElement;
+            if (!root.TryGetProperty("commands", out var commands) || commands.ValueKind != JsonValueKind.Array)
+                return "";
 
-        return result.Count > 0 ? string.Join("\n", result).Trim() : "";
+            var lines = new List<string>();
+            foreach (var cmd in commands.EnumerateArray())
+            {
+                if (cmd.ValueKind == JsonValueKind.String)
+                {
+                    var line = cmd.GetString()?.Trim();
+                    if (!string.IsNullOrWhiteSpace(line))
+                        lines.Add(line);
+                    continue;
+                }
+
+                if (cmd.ValueKind != JsonValueKind.Object)
+                    continue;
+                if (!cmd.TryGetProperty("cmd", out var codeNode) || codeNode.ValueKind != JsonValueKind.String)
+                    continue;
+
+                var code = codeNode.GetString()?.Trim();
+                if (string.IsNullOrWhiteSpace(code))
+                    continue;
+
+                var args = new List<string>();
+                if (cmd.TryGetProperty("args", out var argsNode) && argsNode.ValueKind == JsonValueKind.Array)
+                {
+                    foreach (var a in argsNode.EnumerateArray())
+                    {
+                        if (a.ValueKind == JsonValueKind.String)
+                        {
+                            var s = a.GetString();
+                            if (!string.IsNullOrWhiteSpace(s))
+                                args.Add(s.Trim());
+                        }
+                        else if (a.ValueKind == JsonValueKind.Number && a.TryGetInt32(out var n))
+                        {
+                            args.Add(n.ToString(CultureInfo.InvariantCulture));
+                        }
+                    }
+                }
+
+                var full = args.Count == 0 ? code : $"{code} {string.Join(' ', args)}";
+                lines.Add(full);
+            }
+
+            usedJson = true;
+            return string.Join('\n', lines).Trim();
+        }
+        catch
+        {
+            return "";
+        }
     }
 
     private static string NormalizeOrders(string rawOrders)
@@ -1044,14 +1125,454 @@ public sealed class BotAgent(
             : fallback;
     }
 
-    private async Task<string> ValidateOrdersToolExecutor(string name, string argsJson)
+    private async Task<string> TurnToolExecutor(string name, string argsJson)
     {
-        var args = JsonDocument.Parse(argsJson).RootElement;
-        var orders = args.TryGetProperty("orders", out var o) ? o.GetString() ?? "" : "";
-        var result = await ValidateOrdersAsync(orders, CancellationToken.None);
-        logger.LogInformation("🔧 [{Race}] Tool call: validate_orders → {Result}", config.RaceName, result[..Math.Min(80, result.Length)]);
-        return result;
+        if (name.Equals("validate_orders", StringComparison.OrdinalIgnoreCase))
+        {
+            var args = JsonDocument.Parse(argsJson).RootElement;
+            var orders = args.TryGetProperty("orders", out var o) ? o.GetString() ?? "" : "";
+            var result = await ValidateOrdersAsync(orders, CancellationToken.None);
+            logger.LogInformation("🔧 [{Race}] Tool call: validate_orders → {Result}", config.RaceName, result[..Math.Min(80, result.Length)]);
+            return result;
+        }
+
+        if (name.Equals("get_turn_context", StringComparison.OrdinalIgnoreCase))
+        {
+            var ctx = _turnToolContext;
+            if (ctx is null)
+                return """{"error":"turn context is not initialized"}""";
+
+            var payload = JsonSerializer.Serialize(new
+            {
+                turn = ctx.Turn,
+                race = config.RaceName,
+                allowedProductionTypes = ctx.AllowedProductionTypes,
+                allowedCargoTypes = ctx.AllowedCargoTypes,
+                designedShipNames = ctx.DesignedShipNames,
+                knownPlanetNames = ctx.KnownPlanetNames,
+                idleGroupNumbers = ctx.GroupNumbers,
+            });
+            logger.LogInformation("🔧 [{Race}] Tool call: get_turn_context → planets={Planets} ships={Ships}",
+                config.RaceName, ctx.KnownPlanetNames.Count, ctx.DesignedShipNames.Count);
+            return payload;
+        }
+
+        if (name.Equals("design_ship", StringComparison.OrdinalIgnoreCase))
+        {
+            var args = JsonDocument.Parse(argsJson).RootElement;
+            var role = args.TryGetProperty("role", out var r) ? (r.GetString() ?? "") : "";
+            var command = role.Trim().ToLowerInvariant() switch
+            {
+                "scout" => "d Scout 1 0 0 0 0",
+                "hauler" => "d Hauler 1 0 0 0 2",
+                "fighter" => "d Fighter 2 2 2 1 0",
+                _ => "d Scout 1 0 0 0 0",
+            };
+            logger.LogInformation("🔧 [{Race}] Tool call: design_ship({Role}) → {Command}", config.RaceName, role, command);
+            return JsonSerializer.Serialize(new { role, command });
+        }
+
+        logger.LogWarning("⚠️ [{Race}] Unknown tool requested: {Tool}", config.RaceName, name);
+        return $"Error: unknown tool '{name}'.";
     }
+
+    private async Task<TurnToolContext> BuildTurnToolContextAsync(int turn, string report, CancellationToken ct)
+    {
+        var designedShips = ExtractDesignedShipNames(report)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        var knownPlanets = await GetKnownPlanetNamesFromSpectateAsync(ct);
+        if (knownPlanets.Count == 0)
+            knownPlanets = ParsePlanetNamesFromReport(report);
+        var groupNumbers = ParseGroupNumbers(report);
+
+        var allowedProduction = new List<string> { "CAP", "MAT", "DRIVE", "WEAPONS", "SHIELDS", "CARGO" };
+        foreach (var ship in designedShips)
+            if (!allowedProduction.Contains(ship, StringComparer.OrdinalIgnoreCase))
+                allowedProduction.Add(ship);
+
+        return new TurnToolContext(
+            Turn: turn,
+            KnownPlanetNames: knownPlanets,
+            DesignedShipNames: designedShips,
+            AllowedProductionTypes: allowedProduction,
+            AllowedCargoTypes: new List<string> { "CAP", "COL", "MAT", "EMPTY" },
+            GroupNumbers: groupNumbers);
+    }
+
+    private async Task<List<string>> GetKnownPlanetNamesFromSpectateAsync(CancellationToken ct)
+    {
+        try
+        {
+            var url = $"{config.ServerUrl}/api/games/{config.GameId}/spectate";
+            var spectate = await Http.GetFromJsonAsync<JsonElement>(url, ct);
+            if (!spectate.TryGetProperty("planets", out var planets) || planets.ValueKind != JsonValueKind.Array)
+                return [];
+
+            return planets.EnumerateArray()
+                .Select(p => p.TryGetProperty("name", out var n) ? n.GetString() : null)
+                .Where(n => !string.IsNullOrWhiteSpace(n))
+                .Select(n => n!)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .OrderBy(n => n, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+        }
+        catch (Exception ex)
+        {
+            logger.LogDebug("Could not load planets from spectate for tool context: {Msg}", ex.Message);
+            return [];
+        }
+    }
+
+    private static List<string> ParsePlanetNamesFromReport(string report)
+    {
+        var result = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var raw in report.ReplaceLineEndings("\n").Split('\n'))
+        {
+            var line = raw.Trim();
+            if (string.IsNullOrWhiteSpace(line))
+                continue;
+            if (line.StartsWith("=") || line.StartsWith("#") || line.StartsWith("Name", StringComparison.OrdinalIgnoreCase))
+                continue;
+
+            var parts = Regex.Split(line, @"\s+");
+            if (parts.Length < 3)
+                continue;
+            if (!double.TryParse(parts[1], NumberStyles.Any, CultureInfo.InvariantCulture, out _))
+                continue;
+            if (!double.TryParse(parts[2], NumberStyles.Any, CultureInfo.InvariantCulture, out _))
+                continue;
+
+            result.Add(parts[0]);
+        }
+
+        return result.OrderBy(x => x, StringComparer.OrdinalIgnoreCase).ToList();
+    }
+
+    private static string BuildDynamicTokenHint(TurnToolContext? ctx)
+    {
+        if (ctx is null)
+            return "If uncertain, call get_turn_context and validate_orders tools before finalizing orders.";
+
+        var planets = ctx.KnownPlanetNames.Count == 0
+            ? "(none)"
+            : string.Join(", ", ctx.KnownPlanetNames);
+        var ships = ctx.DesignedShipNames.Count == 0
+            ? "(none)"
+            : string.Join(", ", ctx.DesignedShipNames);
+        var groups = ctx.GroupNumbers.Count == 0
+            ? "(none)"
+            : string.Join(", ", ctx.GroupNumbers);
+        var prod = string.Join(", ", ctx.AllowedProductionTypes);
+        var cargo = string.Join(", ", ctx.AllowedCargoTypes);
+
+        return $"""
+            STRICT TOKEN CONSTRAINTS (current turn):
+            - Allowed planets for `s`/`r`/`p`: {planets}
+            - Allowed production values for `p`: {prod}
+            - Exact ship names from your designs: {ships}
+            - Allowed cargo values: {cargo}
+            - Available group numbers from report: {groups}
+            If uncertain or validation fails, call `get_turn_context` and then `validate_orders`.
+            """;
+    }
+
+    private static string BuildJsonOutputContractHint()
+    {
+        return """
+            OUTPUT CONTRACT (STRICT, JSON ONLY):
+            Return exactly one JSON object with this shape:
+            {
+              "reasoning": "short reasoning",
+              "commands": [
+                { "cmd": "o", "args": ["AUTOUNLOAD"] },
+                { "cmd": "p", "args": ["P11", "Fighter"] },
+                { "cmd": "s", "args": [1, "P12"] }
+              ]
+            }
+            Rules:
+            - No markdown, no code fences, no prose outside JSON.
+            - `commands` is required and must contain all orders for the turn.
+            - Each command must be either object {"cmd","args"} or a single string line.
+            """;
+    }
+
+    private static bool ValidateOrdersAgainstTurnContext(string orders, TurnToolContext? ctx, out string error)
+    {
+        if (string.IsNullOrWhiteSpace(orders))
+        {
+            error = "JSON commands were empty or unparsable.";
+            return false;
+        }
+        if (ctx is null)
+        {
+            error = "";
+            return true;
+        }
+
+        var allowedGroups = new HashSet<int>(ctx.GroupNumbers);
+        var allowedPlanets = new HashSet<string>(ctx.KnownPlanetNames, StringComparer.OrdinalIgnoreCase);
+        var allowedProd = new HashSet<string>(ctx.AllowedProductionTypes, StringComparer.OrdinalIgnoreCase);
+        var allowedCargo = new HashSet<string>(ctx.AllowedCargoTypes, StringComparer.OrdinalIgnoreCase);
+        var localCargo = new HashSet<string>(new[] { "CAP", "COL", "MAT" }, StringComparer.OrdinalIgnoreCase);
+        var problems = new List<string>();
+
+        foreach (var line in orders.ReplaceLineEndings("\n").Split('\n', StringSplitOptions.RemoveEmptyEntries))
+        {
+            var parts = line.Trim().Split(' ', StringSplitOptions.RemoveEmptyEntries);
+            if (parts.Length == 0)
+                continue;
+            var cmd = parts[0].ToLowerInvariant();
+
+            if (cmd == "p" && parts.Length >= 3)
+            {
+                if (!allowedPlanets.Contains(parts[1]))
+                    problems.Add($"unknown planet in p: {parts[1]} (try: {SuggestToken(parts[1], ctx.KnownPlanetNames)})");
+                if (!allowedProd.Contains(parts[2]))
+                    problems.Add($"unknown production type in p: {parts[2]} (try: {SuggestToken(parts[2], ctx.AllowedProductionTypes)})");
+            }
+            else if (cmd == "s" && parts.Length >= 3)
+            {
+                if (!int.TryParse(parts[1], out var g) || (allowedGroups.Count > 0 && !allowedGroups.Contains(g)))
+                    problems.Add($"unknown group in s: {parts[1]}");
+                if (!allowedPlanets.Contains(parts[2]))
+                    problems.Add($"unknown planet in s: {parts[2]} (try: {SuggestToken(parts[2], ctx.KnownPlanetNames)})");
+            }
+            else if (cmd == "l" && parts.Length >= 3)
+            {
+                if (!int.TryParse(parts[1], out var g) || (allowedGroups.Count > 0 && !allowedGroups.Contains(g)))
+                    problems.Add($"unknown group in l: {parts[1]}");
+                if (!localCargo.Contains(parts[2]))
+                    problems.Add($"unknown cargo in l: {parts[2]} (try: {SuggestToken(parts[2], localCargo.ToList())})");
+            }
+            else if (cmd == "r" && parts.Length >= 4)
+            {
+                if (!allowedPlanets.Contains(parts[1]))
+                    problems.Add($"unknown route planet: {parts[1]} (try: {SuggestToken(parts[1], ctx.KnownPlanetNames)})");
+                if (!allowedCargo.Contains(parts[2]))
+                    problems.Add($"unknown route cargo: {parts[2]} (try: {SuggestToken(parts[2], ctx.AllowedCargoTypes)})");
+                if (!allowedPlanets.Contains(parts[3]))
+                    problems.Add($"unknown route destination: {parts[3]} (try: {SuggestToken(parts[3], ctx.KnownPlanetNames)})");
+            }
+        }
+
+        if (problems.Count == 0)
+        {
+            error = "";
+            return true;
+        }
+
+        error = "Local semantic validation failed:\n" + string.Join("\n", problems.Distinct().Take(6).Select(p => $"  - {p}"));
+        return false;
+    }
+
+    private static string EnforceCommandWhitelist(string orders, TurnToolContext? ctx, out int rewritten, out int dropped)
+    {
+        rewritten = 0;
+        dropped = 0;
+        if (ctx is null || string.IsNullOrWhiteSpace(orders))
+            return orders;
+
+        var allowedGroups = new HashSet<int>(ctx.GroupNumbers);
+        var outLines = new List<string>();
+
+        foreach (var rawLine in orders.ReplaceLineEndings("\n").Split('\n', StringSplitOptions.RemoveEmptyEntries))
+        {
+            var line = rawLine.Trim();
+            if (line.StartsWith("@"))
+            {
+                outLines.Add(rawLine);
+                continue;
+            }
+
+            var parts = line.Split(' ', StringSplitOptions.RemoveEmptyEntries).ToList();
+            if (parts.Count == 0)
+                continue;
+            var cmd = parts[0].ToLowerInvariant();
+            var original = string.Join(' ', parts);
+
+            bool keep = true;
+            if (cmd == "p" && parts.Count >= 3)
+            {
+                parts[1] = CanonicalizeToken(parts[1], ctx.KnownPlanetNames);
+                parts[2] = CanonicalizeToken(parts[2], ctx.AllowedProductionTypes);
+                keep = ctx.KnownPlanetNames.Contains(parts[1], StringComparer.OrdinalIgnoreCase)
+                    && ctx.AllowedProductionTypes.Contains(parts[2], StringComparer.OrdinalIgnoreCase);
+            }
+            else if (cmd == "s" && parts.Count >= 3)
+            {
+                parts[2] = CanonicalizeToken(parts[2], ctx.KnownPlanetNames);
+                keep = int.TryParse(parts[1], out var g) && (allowedGroups.Count == 0 || allowedGroups.Contains(g))
+                    && ctx.KnownPlanetNames.Contains(parts[2], StringComparer.OrdinalIgnoreCase);
+            }
+            else if (cmd == "l" && parts.Count >= 3)
+            {
+                var allowedLocal = new List<string> { "CAP", "COL", "MAT" };
+                parts[2] = CanonicalizeToken(parts[2], allowedLocal);
+                keep = int.TryParse(parts[1], out var g) && (allowedGroups.Count == 0 || allowedGroups.Contains(g))
+                    && allowedLocal.Contains(parts[2], StringComparer.OrdinalIgnoreCase);
+            }
+            else if (cmd == "r" && parts.Count >= 4)
+            {
+                parts[1] = CanonicalizeToken(parts[1], ctx.KnownPlanetNames);
+                parts[2] = CanonicalizeToken(parts[2], ctx.AllowedCargoTypes);
+                parts[3] = CanonicalizeToken(parts[3], ctx.KnownPlanetNames);
+                keep = ctx.KnownPlanetNames.Contains(parts[1], StringComparer.OrdinalIgnoreCase)
+                    && ctx.AllowedCargoTypes.Contains(parts[2], StringComparer.OrdinalIgnoreCase)
+                    && ctx.KnownPlanetNames.Contains(parts[3], StringComparer.OrdinalIgnoreCase);
+            }
+
+            if (!keep)
+            {
+                dropped++;
+                continue;
+            }
+
+            var rewrittenLine = string.Join(' ', parts);
+            if (!rewrittenLine.Equals(original, StringComparison.Ordinal))
+                rewritten++;
+            outLines.Add(rewrittenLine);
+        }
+
+        return string.Join('\n', outLines).Trim();
+    }
+
+    private static string SuggestToken(string token, IReadOnlyList<string> allowed)
+    {
+        if (allowed.Count == 0) return "(none)";
+        var canonical = CanonicalizeToken(token, allowed);
+        if (allowed.Contains(canonical, StringComparer.OrdinalIgnoreCase))
+            return canonical;
+        return allowed[0];
+    }
+
+    private static string CanonicalizeOrdersWithTurnContext(string orders, TurnToolContext? ctx, out int fixes)
+    {
+        fixes = 0;
+        if (ctx is null || string.IsNullOrWhiteSpace(orders))
+            return orders;
+
+        var lines = new List<string>();
+        bool inMessage = false;
+        foreach (var rawLine in orders.ReplaceLineEndings("\n").Split('\n'))
+        {
+            var line = rawLine.Trim();
+            if (string.IsNullOrWhiteSpace(line))
+                continue;
+            if (inMessage)
+            {
+                lines.Add(rawLine);
+                if (line.StartsWith("@"))
+                    inMessage = false;
+                continue;
+            }
+            if (line.StartsWith("@"))
+            {
+                lines.Add(rawLine);
+                inMessage = true;
+                continue;
+            }
+
+            var parts = line.Split(' ', StringSplitOptions.RemoveEmptyEntries).ToList();
+            if (parts.Count == 0)
+                continue;
+
+            var cmd = parts[0].ToLowerInvariant();
+            if (cmd == "p" && parts.Count >= 3)
+            {
+                fixes += CanonicalizeTokenInPlace(parts, 1, ctx.KnownPlanetNames);
+                fixes += CanonicalizeTokenInPlace(parts, 2, ctx.AllowedProductionTypes);
+            }
+            else if (cmd == "s" && parts.Count >= 3)
+            {
+                fixes += CanonicalizeTokenInPlace(parts, 2, ctx.KnownPlanetNames);
+            }
+            else if (cmd == "l" && parts.Count >= 3)
+            {
+                fixes += CanonicalizeTokenInPlace(parts, 2, new List<string> { "CAP", "COL", "MAT" });
+            }
+            else if (cmd == "r" && parts.Count >= 4)
+            {
+                fixes += CanonicalizeTokenInPlace(parts, 1, ctx.KnownPlanetNames);
+                fixes += CanonicalizeTokenInPlace(parts, 2, ctx.AllowedCargoTypes);
+                fixes += CanonicalizeTokenInPlace(parts, 3, ctx.KnownPlanetNames);
+            }
+
+            lines.Add(string.Join(' ', parts));
+        }
+
+        return string.Join('\n', lines).Trim();
+    }
+
+    private static int CanonicalizeTokenInPlace(List<string> tokens, int index, IReadOnlyList<string> allowed)
+    {
+        if (index >= tokens.Count || allowed.Count == 0)
+            return 0;
+        var original = tokens[index];
+        var canonical = CanonicalizeToken(original, allowed);
+        if (canonical.Equals(original, StringComparison.Ordinal))
+            return 0;
+        tokens[index] = canonical;
+        return 1;
+    }
+
+    private static string CanonicalizeToken(string token, IReadOnlyList<string> allowed)
+    {
+        if (string.IsNullOrWhiteSpace(token))
+            return token;
+
+        // Exact match first.
+        var exact = allowed.FirstOrDefault(a => a.Equals(token, StringComparison.OrdinalIgnoreCase));
+        if (!string.IsNullOrWhiteSpace(exact))
+            return exact;
+
+        var normalized = NormalizeToken(token);
+        if (string.IsNullOrWhiteSpace(normalized))
+            return token;
+
+        var exactNormalized = allowed.FirstOrDefault(a => NormalizeToken(a).Equals(normalized, StringComparison.OrdinalIgnoreCase));
+        if (!string.IsNullOrWhiteSpace(exactNormalized))
+            return exactNormalized;
+
+        // Strip common suffix noise (e.g. FighterP, FighterS1, P11s2).
+        var stripped = Regex.Replace(normalized, @"(S\d+|L\d+|P)$", "", RegexOptions.IgnoreCase);
+        if (!string.IsNullOrWhiteSpace(stripped) && !stripped.Equals(normalized, StringComparison.OrdinalIgnoreCase))
+        {
+            var strippedMatch = allowed.FirstOrDefault(a =>
+                NormalizeToken(a).Equals(stripped, StringComparison.OrdinalIgnoreCase)
+                || stripped.StartsWith(NormalizeToken(a), StringComparison.OrdinalIgnoreCase));
+            if (!string.IsNullOrWhiteSpace(strippedMatch))
+                return strippedMatch;
+        }
+
+        // Prefix repair: FIGHTERP -> Fighter, WEAPONSP -> WEAPONS, COLS3 -> COL.
+        var prefixMatches = allowed
+            .Where(a =>
+            {
+                var an = NormalizeToken(a);
+                return normalized.StartsWith(an, StringComparison.OrdinalIgnoreCase)
+                       || an.StartsWith(normalized, StringComparison.OrdinalIgnoreCase);
+            })
+            .OrderBy(a => Math.Abs(NormalizeToken(a).Length - normalized.Length))
+            .ThenBy(a => a.Length)
+            .ToList();
+        if (prefixMatches.Count > 0)
+            return prefixMatches[0];
+
+        // Fallback: allow planets like P11s2 to map to P11 by alnum-prefix.
+        var alphaNumPrefix = Regex.Match(normalized, @"^[A-Z]+\d+", RegexOptions.IgnoreCase).Value;
+        if (!string.IsNullOrWhiteSpace(alphaNumPrefix))
+        {
+            var pref = allowed.FirstOrDefault(a => NormalizeToken(a).Equals(alphaNumPrefix, StringComparison.OrdinalIgnoreCase));
+            if (!string.IsNullOrWhiteSpace(pref))
+                return pref;
+        }
+
+        return token;
+    }
+
+    private static string NormalizeToken(string token)
+        => Regex.Replace(token.Trim().ToUpperInvariant(), @"[^A-Z0-9_-]", "");
 
     private async Task<string> CompleteLlmWithTimeoutAsync(
         IReadOnlyList<ChatMessage> messages,
@@ -1077,6 +1598,13 @@ public sealed class BotAgent(
     private sealed record PlanetSnapshot(string Name, double X, double Y, string? OwnerId);
     private sealed record PlayerCheckpointStat(string Id, string Name, int PlanetCount, bool IsEliminated, double TechPower);
     private sealed record GameStateSnapshot(int Turn, bool IsFinished, bool MySubmitted, string? WinnerName);
+    private sealed record TurnToolContext(
+        int Turn,
+        List<string> KnownPlanetNames,
+        List<string> DesignedShipNames,
+        List<string> AllowedProductionTypes,
+        List<string> AllowedCargoTypes,
+        List<int> GroupNumbers);
     private sealed record CheckpointDecision(bool ShouldSurrender, string? AllyName, string ContinueMessage)
     {
         public static CheckpointDecision None => new(false, null, "");
