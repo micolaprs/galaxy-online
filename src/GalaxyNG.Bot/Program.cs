@@ -28,6 +28,12 @@ var host = Host.CreateDefaultBuilder(args)
             Password  = cfg["Bot:Password"]  ?? throw new InvalidOperationException("Bot:Password required"),
             ServerUrl = cfg["Bot:ServerUrl"] ?? "http://localhost:5000",
             StrategyId = cfg["Bot:StrategyId"],
+            LlmTimeoutSeconds = int.TryParse(cfg["Bot:LlmTimeoutSeconds"], out int lts)
+                ? Math.Clamp(lts, 30, 600) : 180,
+            TurnStartDelaySeconds = int.TryParse(cfg["Bot:TurnStartDelaySeconds"], out int tsd)
+                ? Math.Max(0, tsd) : 0,
+            PollIntervalSeconds = int.TryParse(cfg["Bot:PollIntervalSeconds"], out int pi)
+                ? Math.Clamp(pi, 3, 120) : 8,
             Llm = llmConfig,
         };
 
@@ -36,8 +42,12 @@ var host = Host.CreateDefaultBuilder(args)
 
         services.AddHttpClient("llm", (sp, client) =>
         {
-            var c = sp.GetRequiredService<LlmConfig>();
+            var c  = sp.GetRequiredService<LlmConfig>();
+            var bc = sp.GetRequiredService<BotConfig>();
             client.BaseAddress = new Uri(c.BaseUrl.TrimEnd('/') + "/");
+            // Must be longer than LlmTimeoutSeconds so the CancellationToken fires first,
+            // giving a clean timeout message instead of a raw socket error.
+            client.Timeout = TimeSpan.FromSeconds(bc.LlmTimeoutSeconds + 120);
             if (!string.IsNullOrWhiteSpace(c.ApiKey))
                 client.DefaultRequestHeaders.Add("Authorization", $"Bearer {c.ApiKey}");
             if (IsOpenAiCodexProvider(c.Provider))

@@ -279,6 +279,13 @@ public sealed class BotAgent(
                 {
                     logger.LogInformation("🔔 [{Race}] Новый ход: {Turn}", config.RaceName, state.Turn);
                     lastTurn = state.Turn;
+                    if (config.TurnStartDelaySeconds > 0)
+                    {
+                        var slotMsg = $"очередь LLM: жду {config.TurnStartDelaySeconds}с";
+                        logger.LogInformation("⏳ [{Race}] {Msg}", config.RaceName, slotMsg);
+                        await PostBotStatusAsync("waiting", slotMsg, ct);
+                        await Task.Delay(TimeSpan.FromSeconds(config.TurnStartDelaySeconds), ct);
+                    }
                     await RunTurnAsync(state.Turn, ct);
                 }
                 else if (!state.MySubmitted)
@@ -292,7 +299,7 @@ public sealed class BotAgent(
                     await PostBotStatusAsync("waiting", $"ожидаю хода {state.Turn + 1}", ct);
                     logger.LogDebug("[{Race}] Жду следующего хода (сейчас ход {Turn})", config.RaceName, state.Turn);
                 }
-                await Task.Delay(TimeSpan.FromSeconds(5), ct);
+                await Task.Delay(TimeSpan.FromSeconds(config.PollIntervalSeconds), ct);
             }
             catch (OperationCanceledException) { break; }
             catch (Exception ex)

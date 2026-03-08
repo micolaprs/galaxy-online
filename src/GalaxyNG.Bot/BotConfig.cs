@@ -7,7 +7,9 @@ public sealed record BotConfig
     public required string Password  { get; init; }
     public required string ServerUrl { get; init; }   // e.g. http://localhost:5000
     public string? StrategyId        { get; init; }   // optional explicit strategy id
-    public int LlmTimeoutSeconds     { get; init; } = 90;
+    public int LlmTimeoutSeconds      { get; init; } = 180;   // per-LLM-call timeout
+    public int TurnStartDelaySeconds  { get; init; } = 0;    // stagger: wait before responding to a new turn
+    public int PollIntervalSeconds    { get; init; } = 8;    // how often to poll the server
 
     public LlmConfig Llm { get; init; } = new();
 }

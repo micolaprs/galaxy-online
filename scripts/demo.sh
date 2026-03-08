@@ -302,6 +302,15 @@ if [[ -n "$BOT_LLM_AUTH_DIR" ]]; then
   ok "Auth dir: $BOT_LLM_AUTH_DIR"
 fi
 
+# ── LLM throttle settings ────────────────────────────────────────────────────
+# Stagger bots so they don't hammer the LLM simultaneously.
+# Each bot waits STAGGER_SECONDS × its_index before responding to a new turn.
+# Override via env: GALAXYNG_BOT_LLM_TIMEOUT, GALAXYNG_BOT_STAGGER, GALAXYNG_BOT_POLL_INTERVAL
+BOT_LLM_TIMEOUT="${GALAXYNG_BOT_LLM_TIMEOUT:-240}"
+STAGGER_SECONDS="${GALAXYNG_BOT_STAGGER:-70}"
+BOT_POLL_INTERVAL="${GALAXYNG_BOT_POLL_INTERVAL:-12}"
+info "LLM: timeout=${BOT_LLM_TIMEOUT}с, stagger=${STAGGER_SECONDS}с/бот, poll=${BOT_POLL_INTERVAL}с"
+
 # ── Шаг 2: сборка и запуск сервера ───────────────────────────────────────────
 info "Шаг 2/5 — Сборка и запуск сервера…"
 cd "$SERVER_DIR"
@@ -442,11 +451,16 @@ info "Запуск ${#BOT_NAMES[@]} ботов…"
 for i in "${!BOT_NAMES[@]}"; do
   BOT_NAME="${BOT_NAMES[$i]}"
   BOT_PW="${BOT_PWS[$i]}"
+  TURN_DELAY=$((i * STAGGER_SECONDS))
   LOG_FILE="/tmp/galaxyng-bot-${BOT_NAME}.log"
+  [[ $TURN_DELAY -gt 0 ]] && info "  $BOT_NAME → задержка ответа: ${TURN_DELAY}с (слот LLM #$i)"
   Bot__GameId="$GAME_ID" \
   Bot__RaceName="$BOT_NAME" \
   Bot__Password="$BOT_PW" \
   Bot__ServerUrl="$SERVER_URL" \
+  Bot__LlmTimeoutSeconds="$BOT_LLM_TIMEOUT" \
+  Bot__TurnStartDelaySeconds="$TURN_DELAY" \
+  Bot__PollIntervalSeconds="$BOT_POLL_INTERVAL" \
   Bot__Llm__Provider="$BOT_LLM_PROVIDER" \
   Bot__Llm__Api="$BOT_LLM_API" \
   Bot__Llm__BaseUrl="$BOT_LLM_BASE_URL" \
