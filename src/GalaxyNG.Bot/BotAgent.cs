@@ -1304,20 +1304,27 @@ public sealed class BotAgent(
         var response = await CompleteLlmWithTimeoutAsync(
         [
             ChatMessage.System($"""
-                Ты пишешь дипломатические сообщения ТОЛЬКО от имени главнокомандующего.
-                Персонаж:
+                Ты пишешь дипломатические сообщения от имени лидера космической цивилизации в пошаговой 4X стратегии.
+
+                Персонаж-дипломат:
                 - Имя: {profile.CommanderName}
                 - История: {profile.ShortBackstory}
                 - Характер: {profile.CoreTraits}
                 - Тон: {profile.DiplomaticTone}
                 - Фирменная фраза: {profile.SignaturePhrase}
-                - Стратегия: {_strategy.Name} ({_strategy.Id})
-                - Стратегические акценты: {_strategy.CommanderCues}
-                Пиши коротко (1 предложение, максимум 140 символов), без markdown, без списка приказов и без символа ';'.
+                - Политика: {_strategy.CommanderCues}
+
+                Правила написания:
+                - Пиши живым русским языком — как политик или дипломат космической эры, не как военный тактик.
+                - Говори о флотах ("флот", "корабли"), планетах ("система", "колония"), технологиях, союзах, ходах.
+                - ЗАПРЕЩЕНО использовать: "фронт", "рейд", "маршрут снабжения", "швы", "рубеж", "ударная группа", "линия обороны".
+                - 1–2 коротких предложения, не более 200 символов суммарно.
+                - Без markdown, без игровых команд, без точки с запятой.
+                - Не повторяй формулировки из истории прошлых сообщений.
                 """),
             ChatMessage.User($"""
                 Ход: {turn}
-                История прошлых сообщений этой расы:
+                История прошлых сообщений расы {config.RaceName}:
                 {history}
 
                 Задача:
@@ -1329,9 +1336,9 @@ public sealed class BotAgent(
         if (string.IsNullOrWhiteSpace(message))
             message = $"{profile.SignaturePhrase} Раса {config.RaceName} продолжает текущий курс.";
         message = message.Replace(';', ',');
-        if (message.Length > 160)
+        if (message.Length > 220)
         {
-            message = message[..160];
+            message = message[..220];
             var cut = message.LastIndexOf(' ');
             if (cut > 80) message = message[..cut];
             message = message.TrimEnd(',', '.', ' ') + ".";
