@@ -23,6 +23,7 @@ public sealed class Player
 
     // Diplomacy: other player IDs
     public HashSet<string> Allies     { get; init; } = [];
+    public Dictionary<string, int> AllianceUntilTurn { get; init; } = [];
     public HashSet<string> AtWar      { get; init; } = [];
 
     // Options

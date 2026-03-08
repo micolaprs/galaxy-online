@@ -1,5 +1,6 @@
 import { api } from '../api/client.js';
 import type { TurnHistoryEntry, TurnPlayerOrders, SpectatePlayer, BotStatusEvent } from '../types/api.js';
+import { sanitizeUiText } from '../utils/uiText.js';
 
 const STATUS_LABEL: Record<string, string> = {
   idle:             '💤 idle',
@@ -79,7 +80,7 @@ export class PlayerHistoryPanel {
       const thinkingHtml = ev?.thinking
         ? `<details class="ph-thinking">
              <summary class="ph-thinking-toggle">💭 Размышления</summary>
-             <pre class="ph-thinking-text">${esc(ev.thinking)}</pre>
+             <pre class="ph-thinking-text">${esc(sanitizeUiText(ev.thinking))}</pre>
            </details>`
         : '';
 
@@ -219,7 +220,7 @@ export class PlayerHistoryPanel {
 
     const d = this.turnDetail;
     const summarySection = this.turnSummary
-      ? `<div class="ph-summary-text">${esc(this.turnSummary)}</div>`
+      ? `<div class="ph-summary-text">${esc(sanitizeUiText(this.turnSummary))}</div>`
       : this.loadingSummary
         ? '<div class="ph-loading">ИИ анализирует…</div>'
         : `<button class="btn btn-sm btn-primary" id="ph-gen-summary">✨ Краткая сводка (ИИ)</button>`;
@@ -230,7 +231,7 @@ export class PlayerHistoryPanel {
       : '<div class="ph-event muted">Мирный ход</div>';
 
     // Parse reasoning + orders from either saved history or live LLM response
-    const reasoning = d.reasoning || '';
+    const reasoning = sanitizeUiText(d.reasoning || '');
     const orderLines = (d.orders || '').split('\n')
       .map(l => l.trim()).filter(Boolean);
     const ordersHtml = orderLines.length

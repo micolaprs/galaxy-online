@@ -19,9 +19,10 @@ public sealed class LlmService(IConfiguration config, ILogger<LlmService> logger
     public async Task<string?> GenerateGalaxySummaryAsync(Game game, CancellationToken ct = default)
     {
         var prompt = BuildGalaxySummaryPrompt(game);
-        return await CallLlmAsync(
-            "Ты аналитик космической стратегической игры GalaxyNG. Пиши на русском языке.",
+        var raw = await CallLlmAsync(
+            "Ты аналитик космической стратегической игры GalaxyNG. Ответ только на русском языке, без разделов размышлений и без служебных тегов.",
             prompt, _maxTokens, ct);
+        return UiTextPolicy.Clean(raw, 900);
     }
 
     public async Task<string?> GenerateTurnSummaryAsync(
@@ -32,9 +33,10 @@ public sealed class LlmService(IConfiguration config, ILogger<LlmService> logger
 
         hist.PlayerOrders.TryGetValue(raceName, out var orders);
         var prompt = BuildTurnSummaryPrompt(raceName, turn, orders ?? "", hist.Battles, hist.Bombings);
-        return await CallLlmAsync(
-            "Ты аналитик GalaxyNG. Пиши кратко на русском языке (не более 3-4 предложений).",
+        var raw = await CallLlmAsync(
+            "Ты аналитик GalaxyNG. Пиши кратко на русском языке (не более 3-4 предложений), без reasoning/thinking и без служебных блоков.",
             prompt, 512, ct);
+        return UiTextPolicy.Clean(raw, 700);
     }
 
     // ---- Prompt builders ----
@@ -106,6 +108,54 @@ public sealed class LlmService(IConfiguration config, ILogger<LlmService> logger
             "что они делали, куда двигались, что строили. 2-3 предложения.");
 
         return sb.ToString();
+    }
+
+    private static string BuildGalaxySummaryFallback(Game game)
+    {
+        var leaders = game.Players.Values
+            .Where(p => !p.IsEliminated)
+            .Select(p =>
+            {
+                var planets = game.PlanetsOwnedBy(p.Id).ToList();
+                return new
+                {
+                    p.Name,
+                    Planets = planets.Count,
+                    Population = planets.Sum(x => x.Population),
+                    Ships = p.Groups.Sum(g => g.Ships),
+                };
+            })
+            .OrderByDescending(x => x.Ships)
+            .ThenByDescending(x => x.Population)
+            .ToList();
+
+        if (leaders.Count == 0)
+            return "На текущем ходу активных рас не осталось, галактика ожидает завершения партии.";
+
+        var leader = leaders[0];
+        var events = game.Battles.Count + game.Bombings.Count == 0
+            ? "Ход прошёл без боевых столкновений."
+            : $"За ход зафиксировано {game.Battles.Count} сражений и {game.Bombings.Count} бомбардировок.";
+
+        return $"К ходу {game.Turn} лидерство удерживает {leader.Name}: {leader.Planets} планет и {leader.Ships} кораблей при населении {leader.Population:F0}. " +
+               $"{events} " +
+               "Расстановка сил остаётся напряжённой, и ближайшие ходы будут определяться темпом расширения и эффективностью флотских манёвров.";
+    }
+
+    private static string BuildTurnSummaryFallback(
+        Game game, string raceName, int turn, string orders, List<string> battles, List<string> bombings)
+    {
+        var player = game.GetPlayer(raceName);
+        var orderLines = orders.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Length;
+        var shipCount = player?.Groups.Sum(g => g.Ships) ?? 0;
+        var eventCount = battles.Count + bombings.Count;
+        var eventsText = eventCount == 0
+            ? "Боевых событий с участием расы в этом ходу не зафиксировано."
+            : $"В контексте хода отмечено событий: {eventCount}.";
+
+        return $"На ходу {turn} раса {raceName} отдала {orderLines} приказов и продолжила развитие своей стратегии. " +
+               $"Текущая численность флота оценивается в {shipCount} кораблей. " +
+               $"{eventsText}";
     }
 
     // ---- HTTP call ----

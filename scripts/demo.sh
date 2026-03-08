@@ -13,7 +13,7 @@
 set -euo pipefail
 
 # ── Параметры ────────────────────────────────────────────────────────────────
-GALAXY_SIZE=200
+GALAXY_SIZE=""
 BOTS_ONLY=true
 OPEN_BROWSER=true
 NUM_BOTS=3
@@ -28,7 +28,7 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     -b|--bots-only) BOTS_ONLY=true ; shift ;;
     -n|--bots)      NUM_BOTS="$2"; shift 2 ;;
-    -s|--size)      GALAXY_SIZE="$2"; shift 2 ;;
+    -s|--size)      GALAXY_SIZE="$2"; shift 2 ;; # explicit override
     -o|--open)      OPEN_BROWSER=true;  shift ;;
     --no-open)      OPEN_BROWSER=false; shift ;;
     --no-kill)      DO_KILL=false; shift ;;
@@ -340,7 +340,11 @@ print(' '.join(bots))
 fi
 
 if [[ -z "$GAME_ID" ]]; then
-  info "Шаг 3/5 — Создание игры «${GAME_NAME}» (размер: ${GALAXY_SIZE})…"
+  if [[ -n "$GALAXY_SIZE" ]]; then
+    info "Шаг 3/5 — Создание игры «${GAME_NAME}» (размер: ${GALAXY_SIZE})…"
+  else
+    info "Шаг 3/5 — Создание игры «${GAME_NAME}» (размер: авто)…"
+  fi
 
   PLAYERS_JSON="["
   for i in "${!ALL_NAMES[@]}"; do
@@ -355,10 +359,16 @@ if [[ -z "$GAME_ID" ]]; then
   done
   PLAYERS_JSON+=" ]"
 
+  if [[ -n "$GALAXY_SIZE" ]]; then
+    SIZE_JSON=",\"galaxySize\":$GALAXY_SIZE"
+  else
+    SIZE_JSON=""
+  fi
+
   RESPONSE=$(curl -sf -X POST "$SERVER_URL/api/games" \
     -H "Content-Type: application/json" \
-    -d "$(printf '{"name":"%s","players":%s,"galaxySize":%d,"autoRun":true,"maxTurns":%d}' \
-      "$GAME_NAME" "$PLAYERS_JSON" "$GALAXY_SIZE" "$MAX_TURNS")")
+    -d "$(printf '{"name":"%s","players":%s,"autoRun":true,"maxTurns":%d%s}' \
+      "$GAME_NAME" "$PLAYERS_JSON" "$MAX_TURNS" "$SIZE_JSON")")
 
   GAME_ID=$(echo "$RESPONSE" | python3 -c "import sys,json; print(json.load(sys.stdin)['gameId'])")
   ok "Игра создана: $GAME_ID"

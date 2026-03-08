@@ -33,6 +33,7 @@ public sealed class TurnProcessor(
         game.Battles  = [];
         game.Bombings = [];
         game.Turn++;
+        ExpireAlliances(game);
 
         // Phase 1: account orders, messages, renames queued
         foreach (var player in game.Players.Values)
@@ -82,6 +83,9 @@ public sealed class TurnProcessor(
         // Phase 17: apply pending renames
         foreach (var player in game.Players.Values)
             ApplyRenameOrders(player, game);
+
+        // Update diplomatic identification after all movements/combat are resolved.
+        UpdateIdentifiedContacts(game);
 
         // Reset submission flags
         foreach (var player in game.Players.Values)
@@ -220,6 +224,16 @@ public sealed class TurnProcessor(
             return;
 
         var recipients = ResolveRecipients(game, sender, args[..^1]);
+        if (recipients.Count > 0)
+        {
+            recipients = recipients
+                .Where(id => game.IdentifiedContactPairs.Contains(BuildPairKey(sender.Id, id)))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+            if (recipients.Count == 0)
+                return;
+        }
+
         var message = new DiplomacyMessage
         {
             Turn = game.Turn,
@@ -303,8 +317,15 @@ public sealed class TurnProcessor(
                 {
                     var target = game.GetPlayer(order.Args[0]);
                     if (target is null) break;
+                    var untilTurn = order.Args.Length >= 2 && int.TryParse(order.Args[1], out var parsedUntil)
+                        ? Math.Max(game.Turn, parsedUntil)
+                        : game.Turn + 8;
                     player.Allies.Add(target.Id);
+                    target.Allies.Add(player.Id);
+                    player.AllianceUntilTurn[target.Id] = untilTurn;
+                    target.AllianceUntilTurn[player.Id] = untilTurn;
                     player.AtWar.Remove(target.Id);
+                    target.AtWar.Remove(player.Id);
                     break;
                 }
                 case OrderKind.DeclareWar when order.Args.Length >= 1:
@@ -312,12 +333,57 @@ public sealed class TurnProcessor(
                     var target = game.GetPlayer(order.Args[0]);
                     if (target is null) break;
                     player.AtWar.Add(target.Id);
+                    target.AtWar.Add(player.Id);
                     player.Allies.Remove(target.Id);
+                    target.Allies.Remove(player.Id);
+                    player.AllianceUntilTurn.Remove(target.Id);
+                    target.AllianceUntilTurn.Remove(player.Id);
                     break;
                 }
             }
         }
     }
+
+    private static void ExpireAlliances(Game game)
+    {
+        foreach (var player in game.Players.Values)
+        {
+            var expired = player.AllianceUntilTurn
+                .Where(x => game.Turn > x.Value)
+                .Select(x => x.Key)
+                .ToList();
+            foreach (var otherId in expired)
+            {
+                player.AllianceUntilTurn.Remove(otherId);
+                player.Allies.Remove(otherId);
+                if (game.Players.TryGetValue(otherId, out var other))
+                {
+                    other.Allies.Remove(player.Id);
+                    other.AllianceUntilTurn.Remove(player.Id);
+                }
+            }
+        }
+    }
+
+    private static void UpdateIdentifiedContacts(Game game)
+    {
+        foreach (var planet in game.Planets.Values.Where(p => p.OwnerId is not null))
+        {
+            var ownerId = planet.OwnerId!;
+            var visitors = game.Players.Values
+                .Where(p => p.Id != ownerId)
+                .Where(p => p.Groups.Any(g => !g.InHyperspace && g.At == planet.Name))
+                .Select(p => p.Id)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+            foreach (var visitorId in visitors)
+                game.IdentifiedContactPairs.Add(BuildPairKey(ownerId, visitorId));
+        }
+    }
+
+    private static string BuildPairKey(string a, string b)
+        => string.CompareOrdinal(a, b) <= 0 ? $"{a}:{b}" : $"{b}:{a}";
 
     private void ApplyCargoOrders(Player player, Game game)
     {

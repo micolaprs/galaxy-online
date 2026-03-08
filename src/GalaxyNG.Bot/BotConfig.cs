@@ -6,6 +6,7 @@ public sealed record BotConfig
     public required string RaceName  { get; init; }
     public required string Password  { get; init; }
     public required string ServerUrl { get; init; }   // e.g. http://localhost:5000
+    public int LlmTimeoutSeconds     { get; init; } = 90;
 
     public LlmConfig Llm { get; init; } = new();
 }

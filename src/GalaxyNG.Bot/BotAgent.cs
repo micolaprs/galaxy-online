@@ -17,9 +17,10 @@ public sealed class BotAgent(
     IHttpClientFactory       httpFactory,
     ILogger<BotAgent>        logger)
 {
-    private static readonly TimeSpan LlmTimeout = TimeSpan.FromSeconds(45);
+    private readonly TimeSpan _llmTimeout = TimeSpan.FromSeconds(Math.Clamp(config.LlmTimeoutSeconds, 30, 300));
     private CommanderProfile? _commander;
     private readonly List<DiplomaticMemoryEntry> _myDiplomaticHistory = [];
+    private bool _sentInitialGreeting;
     private bool _retired;
 
     public async Task RunTurnAsync(int turn, CancellationToken ct = default)
@@ -34,7 +35,9 @@ public sealed class BotAgent(
         if (string.IsNullOrWhiteSpace(report))
         {
             logger.LogWarning("❌ [{Race}] Не удалось получить отчёт за ход {Turn}", config.RaceName, turn);
-            await PostBotStatusAsync("idle", "нет отчёта", ct);
+            await PostBotStatusAsync("submitting", $"ход {turn}, fallback без отчёта", ct);
+            await SubmitOrdersAsync("o AUTOUNLOAD", final: true, ct);
+            await PostBotStatusAsync("submitted", $"ход {turn} (fallback)", ct);
             return;
         }
         int reportLines = report.Split('\n').Length;
@@ -123,6 +126,7 @@ public sealed class BotAgent(
             orders = NormalizeOrders(ExtractOrders(raw));
             if (!string.IsNullOrWhiteSpace(checkpoint.ContinueMessage))
                 orders = AppendGlobalMessage(orders, checkpoint.ContinueMessage);
+            orders = await AppendDynamicDiplomacyAsync(orders, turn, report, ct);
             int orderLines = orders.Split('\n', StringSplitOptions.RemoveEmptyEntries).Length;
             logger.LogInformation("📝 [{Race}] LLM составил {Lines} приказов (из {Total} знаков ответа)",
                 config.RaceName, orderLines, raw.Length);
@@ -197,6 +201,12 @@ public sealed class BotAgent(
                     lastTurn = state.Turn;
                     await RunTurnAsync(state.Turn, ct);
                 }
+                else if (!state.MySubmitted)
+                {
+                    logger.LogWarning("↻ [{Race}] Ход {Turn} не отмечен как submitted, повторяю отправку.",
+                        config.RaceName, state.Turn);
+                    await RunTurnAsync(state.Turn, ct);
+                }
                 else
                 {
                     await PostBotStatusAsync("waiting", $"ожидаю хода {state.Turn + 1}", ct);
@@ -252,9 +262,23 @@ public sealed class BotAgent(
     {
         var url  = $"{config.ServerUrl}/api/games/{config.GameId}";
         var json = await Http.GetFromJsonAsync<JsonElement>(url, ct);
+        var mySubmitted = false;
+        if (json.TryGetProperty("players", out var players) && players.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var p in players.EnumerateArray())
+            {
+                var name = p.TryGetProperty("name", out var n) ? n.GetString() ?? "" : "";
+                if (!name.Equals(config.RaceName, StringComparison.OrdinalIgnoreCase))
+                    continue;
+                mySubmitted = p.TryGetProperty("submitted", out var s) && s.ValueKind == JsonValueKind.True;
+                break;
+            }
+        }
+
         return new GameStateSnapshot(
             Turn: json.GetProperty("turn").GetInt32(),
             IsFinished: json.TryGetProperty("isFinished", out var finished) && finished.GetBoolean(),
+            MySubmitted: mySubmitted,
             WinnerName: json.TryGetProperty("winnerName", out var winner) && winner.ValueKind == JsonValueKind.String
                 ? winner.GetString()
                 : null);
@@ -427,17 +451,22 @@ public sealed class BotAgent(
         var target = await FindNearestTargetPlanetAsync(home.Name, ct);
 
         var lines = new List<string> { "o AUTOUNLOAD" };
-        var hasHaulerDesign = ReportMentionsShipType(report, "Hauler");
-        var hasScoutDesign = ReportMentionsShipType(report, "Scout");
+        var hasHaulerDesign  = ReportMentionsShipType(report, "Hauler");
+        var hasScoutDesign   = ReportMentionsShipType(report, "Scout");
+        var hasFighterDesign = ReportMentionsShipType(report, "Fighter");
 
         if (!hasScoutDesign)
-            lines.Add("d Scout 1 1 0 0 0");
+            lines.Add("d Scout 1 0 0 0 0");
         if (!hasHaulerDesign)
-            lines.Add("d Hauler 1 1 0 0 2");
+            lines.Add("d Hauler 1 0 0 0 2");
+        if (!hasFighterDesign)
+            lines.Add("d Fighter 2 2 2 1 0");
 
-        lines.Add($"p {home.Name} Hauler");
+        // Turn 0: start with Haulers to expand quickly
+        // Turn 1+: switch to Fighters to build military
+        lines.Add(turn == 0 ? $"p {home.Name} Hauler" : $"p {home.Name} Fighter");
 
-        if (turn == 1)
+        if (turn == 0 && !_sentInitialGreeting)
         {
             lines.Add("@ ALL");
             lines.Add(await GenerateBroadcastMessageAsync(
@@ -445,15 +474,27 @@ public sealed class BotAgent(
                 turn,
                 ct));
             lines.Add("@");
+            _sentInitialGreeting = true;
         }
 
-        if (turn == 1 && groups.Count > 0 && !string.IsNullOrWhiteSpace(target))
+        // Turn 0: send any starting group toward nearest planet
+        if (turn == 0 && groups.Count > 0 && !string.IsNullOrWhiteSpace(target))
             lines.Add($"s {groups[0]} {target}");
 
-        if (turn >= 3 && groups.Count > 1 && !string.IsNullOrWhiteSpace(target))
+        // Turn 1+: load colonists and send Haulers to expand
+        if (turn >= 1 && groups.Count > 0 && !string.IsNullOrWhiteSpace(target))
+        {
+            lines.Add($"l {groups[0]} COL");
+            lines.Add($"s {groups[0]} {target}");
+            // Set a cargo route so Haulers cycle automatically
+            lines.Add($"r {home.Name} COL {target}");
+        }
+
+        // Turn 2+: send second group (likely a Fighter) forward
+        if (turn >= 2 && groups.Count > 1 && !string.IsNullOrWhiteSpace(target))
             lines.Add($"s {groups[1]} {target}");
 
-        return string.Join('\n', lines);
+        return await AppendDynamicDiplomacyAsync(string.Join('\n', lines), turn, report, ct);
     }
 
     private async Task<string?> FindNearestTargetPlanetAsync(string homePlanet, CancellationToken ct)
@@ -663,7 +704,7 @@ public sealed class BotAgent(
             if (!inStatus || line.Length == 0 || line.StartsWith("Race") || line.StartsWith("-"))
                 continue;
 
-            var m = Regex.Match(line, @"^(?<race>[^\[]+)\[ALLY\]");
+            var m = Regex.Match(line, @"^(?<race>[^\[]+)\[ALLY");
             if (m.Success)
                 allies.Add(m.Groups["race"].Value.Trim());
         }
@@ -698,6 +739,96 @@ public sealed class BotAgent(
         if (text.Contains(payload, StringComparison.Ordinal))
             return text;
         return string.IsNullOrWhiteSpace(text) ? payload : $"{text}\n{payload}";
+    }
+
+    private static string AppendPrivateMessage(string orders, string targetRace, string message)
+    {
+        if (string.IsNullOrWhiteSpace(targetRace) || string.IsNullOrWhiteSpace(message))
+            return orders;
+
+        var text = orders.Trim();
+        var payload = $"@ {targetRace}\n{message}\n@";
+        if (text.Contains(payload, StringComparison.Ordinal))
+            return text;
+        return string.IsNullOrWhiteSpace(text) ? payload : $"{text}\n{payload}";
+    }
+
+    private async Task<string> AppendDynamicDiplomacyAsync(string orders, int turn, string report, CancellationToken ct)
+    {
+        var result = orders;
+        var context = await GetDiplomacyContextAsync(ct);
+        if (context is null)
+            return result;
+
+        if (turn > 0 && turn % 4 == 0)
+        {
+            var global = await GenerateBroadcastMessageAsync(
+                "Свободное дипломатическое сообщение в общий чат: эмоция, угроза, ирония, самоутверждение или хвалебная речь.",
+                turn,
+                ct);
+            result = AppendGlobalMessage(result, global);
+        }
+
+        if (turn >= 2 && turn % 3 == 0 && context.PrivateContacts.Count > 0)
+        {
+            var allies = ParseAlliesFromReport(report);
+            var target = context.PrivateContacts
+                .FirstOrDefault(c => !allies.Contains(c, StringComparer.OrdinalIgnoreCase))
+                ?? context.PrivateContacts[0];
+
+            var privateMsg = await GenerateBroadcastMessageAsync(
+                $"Личное сообщение для расы {target}: дипломатическая игра, блеф или предложение сделки/союза.",
+                turn,
+                ct);
+            result = AppendPrivateMessage(result, target, privateMsg);
+
+            if (!allies.Contains(target, StringComparer.OrdinalIgnoreCase) && turn % 6 == 0)
+                result = $"{result}\na {target} {turn + 8}";
+        }
+
+        return result;
+    }
+
+    private async Task<DiplomacyContext?> GetDiplomacyContextAsync(CancellationToken ct)
+    {
+        try
+        {
+            var url = $"{config.ServerUrl}/api/games/{config.GameId}/spectate";
+            var spectate = await Http.GetFromJsonAsync<JsonElement>(url, ct);
+            var players = spectate.GetProperty("players").EnumerateArray().ToList();
+            var me = players.FirstOrDefault(p =>
+                string.Equals(p.GetProperty("name").GetString(), config.RaceName, StringComparison.OrdinalIgnoreCase));
+            if (me.ValueKind == JsonValueKind.Undefined)
+                return null;
+
+            var myId = me.GetProperty("id").GetString();
+            if (string.IsNullOrWhiteSpace(myId))
+                return null;
+
+            var contacts = new List<string>();
+            if (spectate.TryGetProperty("diplomacy", out var diplomacy)
+                && diplomacy.TryGetProperty("privateChats", out var privateChats))
+            {
+                foreach (var chat in privateChats.EnumerateArray())
+                {
+                    var aId = chat.GetProperty("playerAId").GetString() ?? "";
+                    var bId = chat.GetProperty("playerBId").GetString() ?? "";
+                    var aName = chat.GetProperty("playerAName").GetString() ?? "";
+                    var bName = chat.GetProperty("playerBName").GetString() ?? "";
+                    if (string.Equals(aId, myId, StringComparison.OrdinalIgnoreCase) && !string.IsNullOrWhiteSpace(bName))
+                        contacts.Add(bName);
+                    else if (string.Equals(bId, myId, StringComparison.OrdinalIgnoreCase) && !string.IsNullOrWhiteSpace(aName))
+                        contacts.Add(aName);
+                }
+            }
+
+            return new DiplomacyContext([.. contacts.Distinct(StringComparer.OrdinalIgnoreCase)]);
+        }
+        catch (Exception ex)
+        {
+            logger.LogDebug("Could not load diplomacy context: {Msg}", ex.Message);
+            return null;
+        }
     }
 
     private async Task EnsureCommanderProfileAsync(CancellationToken ct)
@@ -761,6 +892,8 @@ public sealed class BotAgent(
                     var turn = m.TryGetProperty("turn", out var trn) ? trn.GetInt32() : 0;
                     if (!string.IsNullOrWhiteSpace(text))
                         entries.Add(new DiplomaticMemoryEntry(turn, text, false));
+                    if (turn == 0)
+                        _sentInitialGreeting = true;
                 }
             }
 
@@ -849,20 +982,20 @@ public sealed class BotAgent(
         CancellationToken ct)
     {
         using var llmTimeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        llmTimeoutCts.CancelAfter(LlmTimeout);
+        llmTimeoutCts.CancelAfter(_llmTimeout);
         try
         {
             return await llm.CompleteAsync(messages, llmTimeoutCts.Token);
         }
         catch (OperationCanceledException) when (!ct.IsCancellationRequested)
         {
-            throw new TimeoutException($"LLM timeout in {context} after {LlmTimeout.TotalSeconds:F0}s");
+            throw new TimeoutException($"LLM timeout in {context} after {_llmTimeout.TotalSeconds:F0}s");
         }
     }
 
     private sealed record PlanetSnapshot(string Name, double X, double Y, string? OwnerId);
     private sealed record PlayerCheckpointStat(string Id, string Name, int PlanetCount, bool IsEliminated, double TechPower);
-    private sealed record GameStateSnapshot(int Turn, bool IsFinished, string? WinnerName);
+    private sealed record GameStateSnapshot(int Turn, bool IsFinished, bool MySubmitted, string? WinnerName);
     private sealed record CheckpointDecision(bool ShouldSurrender, string? AllyName, string ContinueMessage)
     {
         public static CheckpointDecision None => new(false, null, "");
@@ -906,4 +1039,5 @@ public sealed class BotAgent(
     }
 
     private sealed record DiplomaticMemoryEntry(int Turn, string Text, bool IsSurrender);
+    private sealed record DiplomacyContext(List<string> PrivateContacts);
 }

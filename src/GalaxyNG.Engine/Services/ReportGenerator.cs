@@ -49,8 +49,14 @@ public sealed class ReportGenerator
                 var planets  = game.PlanetsOwnedBy(p.Id).ToList();
                 var totalPop = planets.Sum(pl => pl.Population);
                 var totalInd = planets.Sum(pl => pl.Industry);
-                string diplo = player.Allies.Contains(p.Id) ? " [ALLY]" :
-                               player.AtWar.Contains(p.Id)  ? " [WAR]"  : "";
+                string diplo = "";
+                if (player.Allies.Contains(p.Id))
+                {
+                    var until = player.AllianceUntilTurn.GetValueOrDefault(p.Id, game.Turn);
+                    diplo = $" [ALLY T{until}]";
+                }
+                else if (player.AtWar.Contains(p.Id))
+                    diplo = " [WAR]";
 
                 Line($"{p.Name + diplo,-20} {p.Tech.Drive,6:F2} {p.Tech.Weapons,6:F2} {p.Tech.Shields,6:F2} {p.Tech.Cargo,6:F2} {totalPop,8:F0} {totalInd,8:F0} {planets.Count,6}");
             }
@@ -169,9 +175,10 @@ public sealed class ReportGenerator
         private void AlienPlanets()
         {
             // Planets where player has ships with intel
+            var visible = VisiblePlanetNames();
             var withIntel = game.Planets.Values
                 .Where(p => p.OwnerId != player.Id && p.IsOwned &&
-                            player.Groups.Any(g => g.At == p.Name && !g.InHyperspace))
+                            visible.Contains(p.Name))
                 .ToList();
             if (withIntel.Count == 0) return;
             Section("ALIEN PLANETS (WITH INTEL)");
@@ -185,9 +192,10 @@ public sealed class ReportGenerator
 
         private void UninhabitedPlanets()
         {
+            var visibleNames = VisiblePlanetNames();
             var visible = game.Planets.Values
                 .Where(p => !p.IsOwned &&
-                            player.Groups.Any(g => g.At == p.Name && !g.InHyperspace))
+                            visibleNames.Contains(p.Name))
                 .ToList();
             if (visible.Count == 0) return;
             Section("UNINHABITED PLANETS (SCOUTED)");
@@ -203,16 +211,37 @@ public sealed class ReportGenerator
         private List<(string race, ShipType st)> VisibleAlienShipTypes()
         {
             var visible = new List<(string, ShipType)>();
-            var myPlanets = PlayerPlanets().Select(p => p.Name).ToHashSet();
+            var knownPlanets = VisiblePlanetNames();
 
             foreach (var other in game.Players.Values.Where(p => p.Id != player.Id))
-            foreach (var g in other.Groups.Where(g => !g.InHyperspace && myPlanets.Contains(g.At)))
+            foreach (var g in other.Groups.Where(g => !g.InHyperspace && knownPlanets.Contains(g.At)))
             {
                 if (other.ShipTypes.TryGetValue(g.ShipTypeName, out var st))
                     visible.Add((other.Name, st));
             }
 
             return visible.DistinctBy(x => (x.Item1, x.Item2.Name)).ToList();
+        }
+
+        private HashSet<string> VisiblePlanetNames()
+        {
+            var allies = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { player.Id };
+            foreach (var allyId in player.Allies)
+            {
+                if (player.AllianceUntilTurn.TryGetValue(allyId, out var until) && game.Turn <= until)
+                    allies.Add(allyId);
+            }
+
+            var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var id in allies)
+            {
+                if (!game.Players.TryGetValue(id, out var p)) continue;
+                foreach (var planet in game.PlanetsOwnedBy(p.Id))
+                    names.Add(planet.Name);
+                foreach (var group in p.Groups.Where(g => !g.InHyperspace))
+                    names.Add(group.At);
+            }
+            return names;
         }
 
         private void Section(string title)

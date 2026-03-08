@@ -9,6 +9,7 @@ import { PlanetPanel } from './PlanetPanel.js';
 import { PlayerHistoryPanel } from './PlayerHistoryPanel.js';
 import { GalaxySummaryPanel } from './GalaxySummaryPanel.js';
 import { QuakeConsole } from './QuakeConsole.js';
+import { sanitizeUiText } from '../utils/uiText.js';
 import type { HubConnection } from '@microsoft/signalr';
 
 interface TurnEvent {
@@ -374,13 +375,14 @@ export class WatchView {
 
   private renderMessageLine(msg: SpectateChatMessage): string {
     const sent = new Date(msg.sentAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    const raceColor = this.playerColorMap.get(msg.senderId) ?? '#94a3b8';
     return `
       <div class="wv-dip-msg">
         <div class="wv-dip-msg-head">
-          <span class="wv-dip-msg-race">${esc(msg.senderName)}</span>
+          <span class="wv-dip-msg-race" style="color:${esc(raceColor)}">${esc(msg.senderName)}</span>
           <span class="wv-dip-msg-time">T${msg.turn} • ${esc(sent)}</span>
         </div>
-        <div class="wv-dip-msg-text">${esc(msg.text)}</div>
+        <div class="wv-dip-msg-text">${esc(sanitizeUiText(msg.text))}</div>
       </div>
     `;
   }

@@ -193,7 +193,7 @@ public sealed class GameController(GameService svc) : ControllerBase
                 m.SentAt,
                 senderId = m.SenderId,
                 senderName = m.SenderName,
-                text = m.Text,
+                text = UiTextPolicy.Clean(m.Text, 240),
             })
             .ToList();
 
@@ -299,11 +299,13 @@ public sealed class GameController(GameService svc) : ControllerBase
 
         hist.PlayerOrders.TryGetValue(race, out var orders);
         hist.PlayerReasoning.TryGetValue(race, out var reasoning);
+        var safeOrders    = UiTextPolicy.Clean(orders, 2200);
+        var safeReasoning = UiTextPolicy.Clean(reasoning, 2200);
         return Ok(new
         {
             turn, race,
-            orders    = orders    ?? "",
-            reasoning = reasoning ?? "",
+            orders    = safeOrders,
+            reasoning = safeReasoning,
             battles   = hist.Battles,
             bombings  = hist.Bombings,
         });
@@ -325,7 +327,14 @@ public sealed class GameController(GameService svc) : ControllerBase
     public async Task<IActionResult> GetAiSummaries(string id, CancellationToken ct)
     {
         var summaries = await svc.GetAiSummariesAsync(id, ct);
-        return Ok(summaries.OrderByDescending(s => s.Turn));
+        return Ok(summaries
+            .OrderByDescending(s => s.Turn)
+            .Select(s => new
+            {
+                s.Turn,
+                Summary = UiTextPolicy.Clean(s.Summary, 900),
+                s.GeneratedAt,
+            }));
     }
 
     // POST /api/games/{id}/ai/summary — generate + save galaxy summary
@@ -389,6 +398,22 @@ public sealed class GameController(GameService svc) : ControllerBase
             map[player.Id] = names;
         }
 
+        // Allies share map visibility while alliance is active.
+        foreach (var player in game.Players.Values)
+        {
+            if (!map.TryGetValue(player.Id, out var mine))
+                continue;
+
+            foreach (var allyId in player.Allies)
+            {
+                if (player.AllianceUntilTurn.TryGetValue(allyId, out var until) && game.Turn > until)
+                    continue;
+                if (!map.TryGetValue(allyId, out var allyVision))
+                    continue;
+                mine.UnionWith(allyVision);
+            }
+        }
+
         return map;
     }
 
@@ -405,12 +430,13 @@ public sealed class GameController(GameService svc) : ControllerBase
             {
                 var p1 = players[i];
                 var p2 = players[j];
+                if (!game.IdentifiedContactPairs.Contains(BuildPairChannelId(p1.Id, p2.Id)))
+                    continue;
+
                 var overlap = visibilityByPlayer[p1.Id]
                     .Intersect(visibilityByPlayer[p2.Id], StringComparer.OrdinalIgnoreCase)
                     .OrderBy(name => name)
                     .ToList();
-                if (overlap.Count == 0)
-                    continue;
 
                 var messages = game.DiplomacyMessages
                     .Where(m => IsPrivatePairMessage(m, p1.Id, p2.Id))
@@ -424,7 +450,7 @@ public sealed class GameController(GameService svc) : ControllerBase
                         m.SentAt,
                         senderId = m.SenderId,
                         senderName = m.SenderName,
-                        text = m.Text,
+                        text = UiTextPolicy.Clean(m.Text, 240),
                     })
                     .ToList();
 

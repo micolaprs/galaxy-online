@@ -1,5 +1,6 @@
 import { api } from '../api/client.js';
 import type { AiSummaryEntry } from '../types/api.js';
+import { sanitizeUiText } from '../utils/uiText.js';
 
 export class GalaxySummaryPanel {
   private el: HTMLElement;
@@ -41,7 +42,7 @@ export class GalaxySummaryPanel {
     const histHtml = history.map(s => `
       <details class="gs-history-item">
         <summary class="gs-history-header">Ход ${s.turn} <span class="muted">${timeAgo(s.generatedAt)}</span></summary>
-        <div class="gs-history-text">${esc(s.summary)}</div>
+        <div class="gs-history-text">${esc(sanitizeUiText(s.summary))}</div>
       </details>
     `).join('');
 
@@ -57,7 +58,7 @@ export class GalaxySummaryPanel {
         ${loading
           ? '<div class="gs-loading">Загрузка…</div>'
           : currentSummary
-            ? `<div class="gs-summary-text">${esc(currentSummary.summary)}</div>
+            ? `<div class="gs-summary-text">${esc(sanitizeUiText(currentSummary.summary))}</div>
                <div class="muted gs-gen-time">Сгенерировано ${timeAgo(currentSummary.generatedAt)}</div>`
             : '<div class="gs-empty">Нажми «Сводка от ИИ», чтобы получить анализ текущего хода.</div>'
         }

@@ -7,15 +7,20 @@ public sealed class GalaxyGenerator(Random? rng = null)
 {
     private readonly Random _rng = rng ?? Random.Shared;
 
-    public static GalaxyGeneratorOptions DefaultOptions(int playerCount) => new()
+    public static GalaxyGeneratorOptions DefaultOptions(int playerCount)
     {
-        GalaxySize    = DefaultGalaxySize,
-        PlayerCount   = playerCount,
-        MinDist       = DefaultMinDist,
-        EmptyRadius   = DefaultEmptyRadius,
-        StuffPlanets  = DefaultStuffPlanets,
-        HomePlanets   = DefaultHomePlanets,
-    };
+        double gs = Math.Round(100.0 * (1.0 + Math.Sqrt(Math.Max(1, playerCount))));
+        // 1p→200, 2p→241, 3p→273, 4p→300, 9p→400
+        return new()
+        {
+            GalaxySize    = gs,
+            PlayerCount   = playerCount,
+            MinDist       = Math.Round(gs * 0.15),
+            EmptyRadius   = DefaultEmptyRadius,
+            StuffPlanets  = DefaultStuffPlanets,
+            HomePlanets   = DefaultHomePlanets,
+        };
+    }
 
     public Game Generate(string gameId, string gameName, IReadOnlyList<(string id, string name, string password, bool isBot)> players, GalaxyGeneratorOptions? opts = null)
     {
@@ -114,22 +119,19 @@ public sealed class GalaxyGenerator(Random? rng = null)
     private List<(double x, double y)> PlaceHomeworlds(int count, GalaxyGeneratorOptions opts)
     {
         var positions = new List<(double x, double y)>();
-        int maxAttempts = 10_000;
+        double cx = opts.GalaxySize / 2.0;
+        double cy = opts.GalaxySize / 2.0;
+        double minR = opts.GalaxySize * 0.28;
+        double maxR = opts.GalaxySize * 0.42;
+        double sectorAngle = Math.Tau / Math.Max(1, count);
 
         for (int i = 0; i < count; i++)
         {
-            (double x, double y) pos;
-            int attempts = 0;
-            do
-            {
-                pos = RandomPos(opts.GalaxySize);
-                attempts++;
-                if (attempts > maxAttempts)
-                    throw new InvalidOperationException("Cannot place all homeworlds with given constraints.");
-            }
-            while (positions.Any(p => Dist(p, pos) < opts.MinDist));
-
-            positions.Add(pos);
+            double baseAngle = sectorAngle * i - Math.PI / 2;
+            double jitter    = (_rng.NextDouble() - 0.5) * sectorAngle * 0.55;
+            double angle     = baseAngle + jitter;
+            double r         = minR + _rng.NextDouble() * (maxR - minR);
+            positions.Add((cx + Math.Cos(angle) * r, cy + Math.Sin(angle) * r));
         }
         return positions;
     }

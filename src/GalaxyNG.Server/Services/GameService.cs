@@ -192,6 +192,9 @@ public sealed class GameService(
             await store.SaveAsync(game, ct);
             logger.LogInformation("Ran turn {Turn} for game {Id}", game.Turn, game.Id);
 
+            // Generate AI summary in background after every turn (fire-and-forget)
+            _ = Task.Run(() => GenerateGalaxySummaryAsync(gameId, CancellationToken.None), CancellationToken.None);
+
             await hub.Clients.Group(gameId)
                 .SendAsync("TurnComplete", new { turn = game.Turn }, ct);
             if (game.IsFinished)
@@ -250,23 +253,26 @@ public sealed class GameService(
         string gameId, string raceName, string status, string? detail, string? thinking = null,
         CancellationToken ct = default)
     {
+        var safeDetail   = UiTextPolicy.Clean(detail, 220);
+        var safeThinking = UiTextPolicy.Clean(thinking, 1400);
+
         logger.LogInformation("Bot {Race} status: {Status}{Detail}",
-            raceName, status, detail is not null ? $" — {detail}" : "");
+            raceName, status, safeDetail is not null ? $" — {safeDetail}" : "");
 
         // Persist reasoning so it survives beyond the SignalR event lifetime
-        if (thinking is not null)
+        if (!string.IsNullOrWhiteSpace(safeThinking))
         {
             var game = await GetGameAsync(gameId, ct);
             if (game is not null)
-                game.CurrentTurnReasoning[raceName] = thinking;
+                game.CurrentTurnReasoning[raceName] = safeThinking;
         }
 
         await hub.Clients.Group(gameId).SendAsync("BotStatusUpdate", new
         {
             raceName,
             status,
-            detail,
-            thinking,
+            detail = safeDetail,
+            thinking = safeThinking,
             time = DateTimeOffset.UtcNow.ToString("HH:mm:ss"),
         }, ct);
     }
@@ -280,6 +286,7 @@ public sealed class GameService(
 
         var summary = await llm.GenerateGalaxySummaryAsync(game, ct);
         if (summary is null) return null;
+        summary = UiTextPolicy.Clean(summary, 900);
 
         // Remove existing summary for this turn, then add new one
         game.AiSummaries.RemoveAll(s => s.Turn == game.Turn);
@@ -293,7 +300,10 @@ public sealed class GameService(
     {
         var game = await GetGameAsync(gameId, ct);
         if (game is null) return null;
-        return await llm.GenerateTurnSummaryAsync(game, raceName, turn, ct);
+        var summary = await llm.GenerateTurnSummaryAsync(game, raceName, turn, ct);
+        if (summary is null) return null;
+        summary = UiTextPolicy.Clean(summary, 700);
+        return summary;
     }
 
     public async Task<List<AiSummaryEntry>> GetAiSummariesAsync(

@@ -81,7 +81,7 @@ export class GalaxyMapThree {
   private routeVisuals: FleetRouteVisual[] = [];
   private showAllRoutes = false;
   private routeFocusPlanet: string | null = null;
-  private galaxySize = 200;
+  private galaxySize = 0;
 
   // Selection ring
   private selectionRing: THREE.Mesh | null = null;
@@ -117,11 +117,13 @@ export class GalaxyMapThree {
   // ---- Public API ----
 
   setData(galaxySize: number, planets: ThreePlanet[], fleetRoutes: ThreeFleetRoute[] = []): void {
+    const isFirstLoad = this.galaxySize === 0;
+    const sizeChanged = this.galaxySize !== galaxySize;
     this.galaxySize = galaxySize;
     this.planets    = planets;
     this.fleetRoutes = fleetRoutes;
     this.buildPlanetMeshes();
-    this.fitToView();
+    if (isFirstLoad || sizeChanged) this.fitToView();
     this.updateRouteVisibility();
     this.render();
   }
@@ -510,7 +512,7 @@ export class GalaxyMapThree {
     const gs = this.galaxySize;
 
     // We want the galaxy to fit with padding
-    const pad  = gs * 0.08;
+    const pad  = gs * 0.12;
     const worldW = gs + pad * 2;
     const worldH = gs + pad * 2;
 
@@ -725,7 +727,10 @@ export class GalaxyMapThree {
         laneMat.opacity = (0.22 + blink * 0.3) * activeFactor;
 
         const pulse = 0.92 + blink * 0.24;
-        const fleetScale = this.fleetScale(route.route.ships) * pulse * (route.route.active === false ? 0.85 : 1);
+        const baseWorldScale = this.fleetScale(route.route.ships);
+        const maxWorldFromScreen = 22 * this.zoom; // cap at ~22px on screen
+        const clampedScale = Math.min(baseWorldScale, maxWorldFromScreen);
+        const fleetScale = clampedScale * pulse * (route.route.active === false ? 0.85 : 1);
         route.ship.scale.setScalar(fleetScale);
       } else {
         traveledMat.opacity = 0;

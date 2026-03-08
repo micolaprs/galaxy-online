@@ -25,6 +25,7 @@ public sealed class Game
 
     // Diplomacy chat history (global + private)
     public List<DiplomacyMessage> DiplomacyMessages { get; set; } = [];
+    public HashSet<string> IdentifiedContactPairs { get; set; } = [];
 
     // Config
     public bool   AutoRunOnAllSubmitted { get; set; } = false;
