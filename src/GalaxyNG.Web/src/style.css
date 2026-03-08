@@ -843,6 +843,29 @@ input:focus { outline: none; border-color: var(--accent); }
   background: rgba(0,0,0,.2);
 }
 
+.gs-status {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-left: 8px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  font-size: 10px;
+  line-height: 1.4;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.gs-status.ready {
+  background: rgba(74, 222, 128, 0.12);
+  color: #4ade80;
+  border: 1px solid rgba(74, 222, 128, 0.35);
+}
+.gs-status.pending {
+  background: rgba(250, 204, 21, 0.12);
+  color: #facc15;
+  border: 1px solid rgba(250, 204, 21, 0.35);
+}
+
 /* Utility */
 .muted { color: var(--muted); }
 
@@ -905,6 +928,29 @@ input:focus { outline: none; border-color: var(--accent); }
   white-space: pre-wrap; word-break: break-word;
   max-height: 400px; overflow-y: auto;
   background: rgba(0,0,0,.3); border-top: 1px solid var(--border);
+}
+
+.ph-summary-status {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-left: 6px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  font-size: 9px;
+  line-height: 1.35;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.ph-summary-status.ready {
+  background: rgba(74, 222, 128, 0.12);
+  color: #4ade80;
+  border: 1px solid rgba(74, 222, 128, 0.35);
+}
+.ph-summary-status.pending {
+  background: rgba(250, 204, 21, 0.12);
+  color: #facc15;
+  border: 1px solid rgba(250, 204, 21, 0.35);
 }
 
 /* ---- Galaxy map: planet selection info overlay ---- */

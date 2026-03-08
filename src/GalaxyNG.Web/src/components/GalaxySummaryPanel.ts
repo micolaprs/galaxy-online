@@ -35,24 +35,39 @@ export class GalaxySummaryPanel {
 
   private render(loading: boolean): void {
     const currentSummary = this.summaries.find(s => s.turn === this.currentTurn);
-    const history        = this.summaries
-      .filter(s => s.turn !== this.currentTurn)
-      .sort((a, b) => b.turn - a.turn);
+    const summaryByTurn = new Map(this.summaries.map(s => [s.turn, s] as const));
+    const historyTurns = Array.from({ length: Math.max(0, this.currentTurn - 1) }, (_, i) => this.currentTurn - 1 - i);
 
-    const histHtml = history.map(s => `
+    const histHtml = historyTurns.map(turn => {
+      const s = summaryByTurn.get(turn);
+      const ready = !!s;
+      const badge = `<span class="gs-status ${ready ? 'ready' : 'pending'}">${ready ? 'готова' : 'в процессе'}</span>`;
+      if (!s) {
+        return `
       <details class="gs-history-item">
-        <summary class="gs-history-header">Ход ${s.turn} <span class="muted">${timeAgo(s.generatedAt)}</span></summary>
+        <summary class="gs-history-header">Ход ${turn} ${badge}</summary>
+        <div class="gs-history-text muted">Сводка для этого хода ещё не сгенерирована.</div>
+      </details>
+    `;
+      }
+      return `
+      <details class="gs-history-item">
+        <summary class="gs-history-header">Ход ${s.turn} ${badge} <span class="muted">${timeAgo(s.generatedAt)}</span></summary>
         <div class="gs-history-text">${esc(sanitizeUiText(s.summary))}</div>
       </details>
-    `).join('');
+    `;
+    }).join('');
+
+    const currentReady = !!currentSummary;
+    const currentStatus = `<span class="gs-status ${currentReady ? 'ready' : 'pending'}">${currentReady ? 'готова' : 'в процессе'}</span>`;
 
     this.el.innerHTML = `
       <div class="gs-current">
         <div class="gs-current-header">
-          <span class="gs-turn-label">Ход ${this.currentTurn}</span>
+          <span class="gs-turn-label">Ход ${this.currentTurn} ${currentStatus}</span>
           <button class="btn btn-sm btn-primary" id="gs-gen-btn"
             ${this.generating ? 'disabled' : ''}>
-            ${this.generating ? '⏳ Анализирую…' : '✨ Сводка от ИИ'}
+            ${this.generating ? '⏳ Анализирую…' : '↻ Обновить'}
           </button>
         </div>
         ${loading
@@ -60,10 +75,10 @@ export class GalaxySummaryPanel {
           : currentSummary
             ? `<div class="gs-summary-text">${esc(sanitizeUiText(currentSummary.summary))}</div>
                <div class="muted gs-gen-time">Сгенерировано ${timeAgo(currentSummary.generatedAt)}</div>`
-            : '<div class="gs-empty">Нажми «Сводка от ИИ», чтобы получить анализ текущего хода.</div>'
+            : '<div class="gs-empty">Сводка ещё не готова. Попробуй обновить через пару секунд.</div>'
         }
       </div>
-      ${history.length > 0 ? `
+      ${historyTurns.length > 0 ? `
         <div class="gs-history">
           <div class="gs-section-title">История сводок</div>
           ${histHtml}

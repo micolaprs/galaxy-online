@@ -330,13 +330,16 @@ public sealed class GameController(GameService svc) : ControllerBase
 
         hist.PlayerOrders.TryGetValue(race, out var orders);
         hist.PlayerReasoning.TryGetValue(race, out var reasoning);
+        hist.PlayerSummaries.TryGetValue(race, out var summary);
         var safeOrders    = UiTextPolicy.Clean(orders, 2200);
         var safeReasoning = UiTextPolicy.Clean(reasoning, 2200);
+        var safeSummary   = UiTextPolicy.Clean(summary, 900);
         return Ok(new
         {
             turn, race,
             orders    = safeOrders,
             reasoning = safeReasoning,
+            summary   = safeSummary,
             battles   = hist.Battles,
             bombings  = hist.Bombings,
         });
@@ -347,6 +350,14 @@ public sealed class GameController(GameService svc) : ControllerBase
     public async Task<IActionResult> GetTurnSummary(
         string id, int turn, string race, CancellationToken ct)
     {
+        var game = await svc.GetGameAsync(id, ct);
+        if (game is null) return NotFound();
+        var hist = game.TurnHistory.FirstOrDefault(h => h.Turn == turn);
+        if (hist is null) return NotFound();
+
+        if (hist.PlayerSummaries.TryGetValue(race, out var cached) && !string.IsNullOrWhiteSpace(cached))
+            return Ok(new { summary = UiTextPolicy.Clean(cached, 900) });
+
         var summary = await svc.GenerateTurnSummaryAsync(id, race, turn, ct);
         return summary is null
             ? Problem("LLM not available or turn not found.")

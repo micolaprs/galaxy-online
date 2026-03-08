@@ -123,7 +123,9 @@ export class PlayerHistoryPanel {
         <button class="ph-back" id="ph-back-players">← Игроки</button>
         <span class="ph-heading">${esc(race)}</span>
       </div>
-      <div class="ph-loading">Загрузка истории…</div>
+      <div class="ph-content">
+        <div class="ph-loading">Загрузка истории…</div>
+      </div>
     `;
     this.el.querySelector('#ph-back-players')!
       .addEventListener('click', () => {
@@ -190,6 +192,9 @@ export class PlayerHistoryPanel {
 
     try {
       this.turnDetail = await api.getTurnPlayerOrders(this.gameId, turn, this.selectedRace!);
+      if (this.turnDetail.summary && this.turnDetail.summary.trim().length > 0) {
+        this.turnSummary = this.turnDetail.summary;
+      }
       this.renderTurnDetail();
     } catch {
       this.showTurnDetailError('Ошибка загрузки приказов');
@@ -219,11 +224,14 @@ export class PlayerHistoryPanel {
     }
 
     const d = this.turnDetail;
+    const summaryReady = !!(this.turnSummary && this.turnSummary.trim().length > 0);
+    const summaryStatus = `<span class="ph-summary-status ${summaryReady ? 'ready' : 'pending'}">${summaryReady ? 'готова' : 'в процессе'}</span>`;
     const summarySection = this.turnSummary
       ? `<div class="ph-summary-text">${esc(sanitizeUiText(this.turnSummary))}</div>`
       : this.loadingSummary
         ? '<div class="ph-loading">ИИ анализирует…</div>'
-        : `<button class="btn btn-sm btn-primary" id="ph-gen-summary">✨ Краткая сводка (ИИ)</button>`;
+        : `<div class="ph-loading">Сводка подготавливается…</div>
+           <button class="btn btn-sm btn-primary" id="ph-gen-summary">↻ Обновить сводку</button>`;
 
     const events = [...d.battles.map(b => `⚔️ ${b}`), ...d.bombings.map(b => `💥 ${b}`)];
     const eventsHtml = events.length
@@ -255,7 +263,7 @@ export class PlayerHistoryPanel {
         <div class="ph-section-title">Отданные команды</div>
         <div class="ph-orders-list">${ordersHtml}</div>
         ${reasoningHtml}
-        <div class="ph-section-title">ИИ-анализ</div>
+        <div class="ph-section-title">ИИ-анализ ${summaryStatus}</div>
         <div class="ph-summary-wrap" id="ph-summary-wrap">
           ${summarySection}
         </div>

@@ -3,6 +3,7 @@ using GalaxyNG.Engine.Services;
 using GalaxyNG.Server.Data;
 using GalaxyNG.Server.Hubs;
 using Microsoft.AspNetCore.SignalR;
+using System.Collections.Concurrent;
 
 namespace GalaxyNG.Server.Services;
 
@@ -16,7 +17,7 @@ public sealed class GameService(
     ILogger<GameService> logger)
 {
     // In-memory cache of active games
-    private readonly Dictionary<string, Game> _cache = [];
+    private readonly ConcurrentDictionary<string, Game> _cache = new();
     private readonly SemaphoreSlim            _lock  = new(1, 1);
 
     // ---- Admin ----
@@ -67,10 +68,15 @@ public sealed class GameService(
 
     public async Task<Game?> GetGameAsync(string gameId, CancellationToken ct = default)
     {
+        if (_cache.TryGetValue(gameId, out var cached))
+            return cached;
+
         await _lock.WaitAsync(ct);
         try
         {
-            if (_cache.TryGetValue(gameId, out var cached)) return cached;
+            if (_cache.TryGetValue(gameId, out cached))
+                return cached;
+
             var loaded = await store.LoadAsync(gameId, ct);
             if (loaded is not null) _cache[gameId] = loaded;
             return loaded;
@@ -188,12 +194,12 @@ public sealed class GameService(
                              (b.PreviousOwner != null ? $" (был {b.PreviousOwner})" : ""))
                 .ToList();
             game.TurnHistory.Add(histEntry);
+            var historyTurn = histEntry.Turn;
+            var summaryTurn = game.Turn;
 
+            await GenerateSummariesForTurnAsync(game, histEntry, historyTurn, summaryTurn, ct);
             await store.SaveAsync(game, ct);
             logger.LogInformation("Ran turn {Turn} for game {Id}", game.Turn, game.Id);
-
-            // Generate AI summary in background after every turn (fire-and-forget)
-            _ = Task.Run(() => GenerateGalaxySummaryAsync(gameId, CancellationToken.None), CancellationToken.None);
 
             await hub.Clients.Group(gameId)
                 .SendAsync("TurnComplete", new { turn = game.Turn }, ct);
@@ -300,9 +306,16 @@ public sealed class GameService(
     {
         var game = await GetGameAsync(gameId, ct);
         if (game is null) return null;
+        var hist = game.TurnHistory.FirstOrDefault(h => h.Turn == turn);
+        if (hist is null) return null;
+        if (hist.PlayerSummaries.TryGetValue(raceName, out var cached) && !string.IsNullOrWhiteSpace(cached))
+            return cached;
+
         var summary = await llm.GenerateTurnSummaryAsync(game, raceName, turn, ct);
         if (summary is null) return null;
         summary = UiTextPolicy.Clean(summary, 700);
+        hist.PlayerSummaries[raceName] = summary;
+        await SaveGameAsync(game, ct);
         return summary;
     }
 
@@ -366,5 +379,50 @@ public sealed class GameService(
         game.WinnerName = winnerByScore.Name;
         game.FinishReason = $"Достигнут лимит {game.MaxTurns} ходов, победитель выбран по суммарному рейтингу.";
         game.AutoRunOnAllSubmitted = false;
+    }
+
+    private async Task GenerateSummariesForTurnAsync(
+        Game game, TurnHistoryEntry hist, int historyTurn, int summaryTurn, CancellationToken ct)
+    {
+        try
+        {
+            logger.LogInformation("Generating turn summaries for game {GameId}, turn {Turn}", game.Id, historyTurn);
+
+            var playerSummaries = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var player in game.Players.Values.OrderBy(p => p.Name, StringComparer.OrdinalIgnoreCase))
+            {
+                var summary = await llm.GenerateTurnSummaryAsync(game, player.Name, historyTurn, ct);
+                if (string.IsNullOrWhiteSpace(summary))
+                {
+                    var orderLines = hist.PlayerOrders.TryGetValue(player.Name, out var orders)
+                        ? orders.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Length
+                        : 0;
+                    var events = hist.Battles.Count + hist.Bombings.Count;
+                    summary = $"Ход {historyTurn}: {player.Name} отдал {orderLines} приказов. " +
+                              (events == 0 ? "Крупных боевых событий не зафиксировано." : $"Боевых событий: {events}.") +
+                              " Кампания продолжается.";
+                }
+                playerSummaries[player.Name] = summary;
+            }
+
+            var galaxySummary = await llm.GenerateGalaxySummaryAsync(game, ct);
+            if (string.IsNullOrWhiteSpace(galaxySummary))
+            {
+                var active = game.Players.Values.Count(p => !p.IsEliminated);
+                galaxySummary = $"К ходу {summaryTurn} в игре активны {active} рас. " +
+                                $"За ход произошло {game.Battles.Count} сражений и {game.Bombings.Count} бомбардировок.";
+            }
+
+            foreach (var (race, summary) in playerSummaries)
+                hist.PlayerSummaries[race] = summary;
+
+            game.AiSummaries.RemoveAll(s => s.Turn == summaryTurn);
+            game.AiSummaries.Add(new AiSummaryEntry { Turn = summaryTurn, Summary = galaxySummary, GeneratedAt = DateTime.UtcNow });
+            logger.LogInformation("Turn summaries generated for game {GameId}, turn {Turn}", game.Id, historyTurn);
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Turn summary generation failed for game {GameId} (history turn {Turn})", game.Id, historyTurn);
+        }
     }
 }

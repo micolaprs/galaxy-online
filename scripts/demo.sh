@@ -7,6 +7,7 @@
 #   ./scripts/demo.sh -n 5           # 5 ботов
 #   ./scripts/demo.sh -s 400         # размер галактики
 #   ./scripts/demo.sh --no-kill      # не убивать уже запущенные процессы
+#   ./scripts/demo.sh --no-clean-logs # не очищать /tmp-логи перед стартом
 #   ./scripts/demo.sh --openai-codex --auth-dir ~/.codex
 #   ./scripts/demo.sh --provider openai/codex --auth-dir ~/.codex
 
@@ -20,9 +21,11 @@ NUM_BOTS=3
 DO_KILL=true    # по умолчанию: убиваем старые процессы
 DO_CLEAN=false  # по умолчанию: возобновляем последнюю игру
 FORCE_NEW=false # --new: удалить старые и создать новую
+DO_CLEAN_LOGS=true # по умолчанию: очищаем server/bot логи перед стартом
 LLM_PROVIDER="${GALAXYNG_BOT_LLM_PROVIDER:-openai/codex}"
 PROVIDER_AUTH_DIR="${GALAXYNG_OPENAI_CODEX_AUTH_DIR:-}"
 MAX_TURNS="${GALAXYNG_DEMO_MAX_TURNS:-60}"  # drives galaxy size (more turns = bigger galaxy)
+STRICT_CODEX_DEFAULT=true
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -32,6 +35,8 @@ while [[ $# -gt 0 ]]; do
     -o|--open)      OPEN_BROWSER=true;  shift ;;
     --no-open)      OPEN_BROWSER=false; shift ;;
     --no-kill)      DO_KILL=false; shift ;;
+    --clean-logs)   DO_CLEAN_LOGS=true; shift ;;
+    --no-clean-logs) DO_CLEAN_LOGS=false; shift ;;
     --new)          FORCE_NEW=true; DO_CLEAN=true; shift ;;
     --openai-codex) LLM_PROVIDER="openai/codex"; shift ;;
     --provider)     LLM_PROVIDER="$2"; shift 2 ;;
@@ -50,6 +55,8 @@ while [[ $# -gt 0 ]]; do
       echo "  -o, --open            Открыть браузер после запуска (по умолчанию)"
       echo "  --no-open             Не открывать браузер"
       echo "  --no-kill             Не убивать уже запущенные сервер/боты"
+      echo "  --clean-logs          Очистить /tmp-логи перед стартом (по умолчанию)"
+      echo "  --no-clean-logs       Не очищать /tmp-логи перед стартом"
       echo "  --openai-codex        Быстрый флаг: LLM-провайдер openai/codex"
       echo "  --provider NAME       LLM-провайдер: lmstudio | openai/codex"
       echo "  --auth-dir PATH       Путь к папке auth-файлов Codex (для openai/codex)"
@@ -121,31 +128,37 @@ resolve_llm_runtime() {
   BOT_LLM_BASE_URL="http://localhost:1234/v1"
   BOT_LLM_MODEL="${GALAXYNG_BOT_LLM_MODEL:-qwen/qwen3.5-9b}"
   BOT_LLM_API_KEY="${GALAXYNG_BOT_LLM_API_KEY:-lm-studio}"
+  BOT_LLM_ACCOUNT_ID="${GALAXYNG_BOT_LLM_ACCOUNT_ID:-}"
   BOT_LLM_AUTH_DIR=""
 
   if [[ "$requested" == "openai/codex" || "$requested" == "openai-codex" ]]; then
-    local auth_dir token
+    local auth_dir token account_id creds
     auth_dir="$(expand_home "${PROVIDER_AUTH_DIR:-}")"
     token=""
+    account_id=""
     if [[ -z "$auth_dir" ]]; then
       auth_dir="$HOME/.codex"
     fi
     if [[ -n "$auth_dir" && -f "$auth_dir/auth.json" ]]; then
-      token="$(python3 - "$auth_dir/auth.json" <<'PY'
+      creds="$(python3 - "$auth_dir/auth.json" <<'PY'
 import json, sys
 p = sys.argv[1]
 try:
     with open(p, "r", encoding="utf-8") as f:
         d = json.load(f)
     t = (d.get("tokens") or {}).get("access_token") or ""
+    a = (d.get("tokens") or {}).get("account_id") or ""
     if t:
-        print(t)
+        print(t + "\t" + a)
     else:
-        print(d.get("OPENAI_API_KEY") or "")
+        k = d.get("OPENAI_API_KEY") or ""
+        print(k + "\t")
 except Exception:
-    print("")
+    print("\t")
 PY
 )"
+      token="${creds%%$'\t'*}"
+      account_id="${creds#*$'\t'}"
     fi
 
     if [[ -n "$auth_dir" && -n "$token" ]]; then
@@ -154,11 +167,29 @@ PY
       BOT_LLM_BASE_URL="https://chatgpt.com/backend-api"
       BOT_LLM_MODEL="${GALAXYNG_BOT_LLM_MODEL:-gpt-5.3-codex}"
       BOT_LLM_API_KEY="$token"
+      BOT_LLM_ACCOUNT_ID="${BOT_LLM_ACCOUNT_ID:-$account_id}"
       BOT_LLM_AUTH_DIR="$auth_dir"
     else
-      warn "Провайдер openai/codex недоступен (нет valid auth.json в --auth-dir / GALAXYNG_OPENAI_CODEX_AUTH_DIR). Переходим на LM Studio."
+      echo "ERROR: openai/codex недоступен: не найден валидный auth token." >&2
+      echo "Проверь файл: ${auth_dir:-$HOME/.codex}/auth.json" >&2
+      echo "Или передай --auth-dir <path> / GALAXYNG_OPENAI_CODEX_AUTH_DIR." >&2
+      echo "Если нужен LM Studio, укажи явно: --provider lmstudio" >&2
+      exit 1
     fi
   fi
+
+  if [[ "$STRICT_CODEX_DEFAULT" == "true" && "$requested" != "lmstudio" && "$requested" != "openai/codex" && "$requested" != "openai-codex" ]]; then
+    echo "ERROR: неизвестный provider '$LLM_PROVIDER'. Используй openai/codex или lmstudio." >&2
+    exit 1
+  fi
+
+  # Server LLM defaults are synchronized with bot LLM so summaries use same provider.
+  SERVER_LLM_PROVIDER="$BOT_LLM_PROVIDER"
+  SERVER_LLM_API="$BOT_LLM_API"
+  SERVER_LLM_BASE_URL="$BOT_LLM_BASE_URL"
+  SERVER_LLM_MODEL="${GALAXYNG_SERVER_LLM_MODEL:-$BOT_LLM_MODEL}"
+  SERVER_LLM_API_KEY="${GALAXYNG_SERVER_LLM_API_KEY:-$BOT_LLM_API_KEY}"
+  SERVER_LLM_ACCOUNT_ID="${GALAXYNG_SERVER_LLM_ACCOUNT_ID:-$BOT_LLM_ACCOUNT_ID}"
 }
 
 # ── Цвета ────────────────────────────────────────────────────────────────────
@@ -185,6 +216,13 @@ trap cleanup EXIT INT TERM
 if $DO_KILL || $DO_CLEAN; then
   echo ""
   echo -e "${RED}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+fi
+
+if $DO_CLEAN_LOGS; then
+  info "Шаг 0л — Очищаем логи в /tmp…"
+  : > /tmp/galaxyng-server.log
+  rm -f /tmp/galaxyng-bot-*.log
+  ok "Логи очищены"
 fi
 
 if $DO_KILL; then
@@ -248,6 +286,13 @@ npm install --silent
 npm run build --silent
 ok "Frontend собран → wwwroot/"
 
+# ── Подготовка LLM-конфига до запуска сервера ───────────────────────────────
+resolve_llm_runtime
+ok "LLM provider: $BOT_LLM_PROVIDER (model: $BOT_LLM_MODEL)"
+if [[ -n "$BOT_LLM_AUTH_DIR" ]]; then
+  ok "Auth dir: $BOT_LLM_AUTH_DIR"
+fi
+
 # ── Шаг 2: сборка и запуск сервера ───────────────────────────────────────────
 info "Шаг 2/5 — Сборка и запуск сервера…"
 cd "$SERVER_DIR"
@@ -256,7 +301,13 @@ dotnet build -c Release -v quiet 2>&1 | tail -3
 if curl -sf "$SERVER_URL/api/games" > /dev/null 2>&1; then
   warn "Сервер уже работает на $SERVER_URL — используем существующий"
 else
-  dotnet run -c Release --no-build --no-launch-profile --urls "http://localhost:5055" \
+  Llm__Provider="$SERVER_LLM_PROVIDER" \
+  Llm__Api="$SERVER_LLM_API" \
+  Llm__BaseUrl="$SERVER_LLM_BASE_URL" \
+  Llm__Model="$SERVER_LLM_MODEL" \
+  Llm__ApiKey="$SERVER_LLM_API_KEY" \
+  Llm__AccountId="$SERVER_LLM_ACCOUNT_ID" \
+    dotnet run -c Release --no-build --no-launch-profile --urls "http://localhost:5055" \
     > /tmp/galaxyng-server.log 2>&1 &
   SERVER_PID=$!
   SERVER_MANAGED=true
@@ -379,12 +430,6 @@ info "Шаг 4/5 — Сборка ботов…"
 cd "$BOT_DIR"
 dotnet build -c Release -v quiet 2>&1 | tail -3
 
-resolve_llm_runtime
-ok "LLM provider: $BOT_LLM_PROVIDER (model: $BOT_LLM_MODEL)"
-if [[ -n "$BOT_LLM_AUTH_DIR" ]]; then
-  ok "Auth dir: $BOT_LLM_AUTH_DIR"
-fi
-
 info "Запуск ${#BOT_NAMES[@]} ботов…"
 for i in "${!BOT_NAMES[@]}"; do
   BOT_NAME="${BOT_NAMES[$i]}"
@@ -399,6 +444,7 @@ for i in "${!BOT_NAMES[@]}"; do
   Bot__Llm__BaseUrl="$BOT_LLM_BASE_URL" \
   Bot__Llm__Model="$BOT_LLM_MODEL" \
   Bot__Llm__ApiKey="$BOT_LLM_API_KEY" \
+  Bot__Llm__AccountId="$BOT_LLM_ACCOUNT_ID" \
   Bot__Llm__AuthFilesDir="$BOT_LLM_AUTH_DIR" \
     dotnet run -c Release --no-build --no-launch-profile >> "$LOG_FILE" 2>&1 &
   BOT_PIDS+=($!)

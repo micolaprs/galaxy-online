@@ -11,6 +11,9 @@ public sealed class TurnHistoryEntry
     /// <summary>LLM reasoning text per bot player: raceName → reasoningText.</summary>
     public Dictionary<string, string> PlayerReasoning { get; set; } = [];
 
+    /// <summary>AI short summaries per player for this turn: raceName → summaryText.</summary>
+    public Dictionary<string, string> PlayerSummaries { get; set; } = [];
+
     /// <summary>Human-readable battle descriptions.</summary>
     public List<string> Battles  { get; set; } = [];
 
