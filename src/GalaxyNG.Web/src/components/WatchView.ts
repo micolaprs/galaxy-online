@@ -52,6 +52,8 @@ export class WatchView {
   private showAllRoutes = true;
   private routeFocusPlanet: string | null = null;
   private activeFleetRoute: ThreeFleetRoute | null = null;
+  private expandedChannels = new Set<string>();
+  private lastPrivateChats: import('../types/api.js').SpectatePrivateChat[] = [];
   private finalReport: FinalGameReport | null = null;
   private finalReportAutoOpened = false;
 
@@ -464,30 +466,62 @@ export class WatchView {
     }
 
     const privateChats = data.diplomacy?.privateChats ?? [];
+    this.lastPrivateChats = privateChats;
     if (privateChats.length === 0) {
       privateEl.innerHTML = '<div class="wv-dip-empty">Личные каналы откроются при пересечении зон видимости рас.</div>';
       return;
     }
 
-    privateEl.innerHTML = privateChats
-      .map(chat => this.renderPrivateChat(chat))
-      .join('');
+    this.renderPrivateChats(privateEl);
+  }
+
+  private renderPrivateChats(privateEl: HTMLElement): void {
+    const sorted = [...this.lastPrivateChats].sort(
+      (a, b) => b.messages.length - a.messages.length,
+    );
+
+    privateEl.innerHTML = sorted.map(chat => this.renderPrivateChat(chat)).join('');
+
+    privateEl.querySelectorAll<HTMLElement>('.wv-dip-ch-toggle').forEach(header => {
+      header.addEventListener('click', () => {
+        const id = header.dataset['channelId']!;
+        if (this.expandedChannels.has(id)) {
+          this.expandedChannels.delete(id);
+        } else {
+          this.expandedChannels.add(id);
+        }
+        this.renderPrivateChats(privateEl);
+      });
+    });
   }
 
   private renderPrivateChat(chat: SpectatePrivateChat): string {
-    const messages = chat.messages.length > 0
-      ? chat.messages.slice(-10).map(msg => this.renderMessageLine(msg)).join('')
-      : '<div class="wv-dip-empty">Канал открыт. Сообщений пока нет.</div>';
+    const isExpanded = this.expandedChannels.has(chat.channelId);
+    const msgCount = chat.messages.length;
 
     const overlapLabel = chat.overlapPlanets.length > 0
       ? `Зона контакта: ${chat.overlapPlanets.join(', ')}`
       : 'Зона контакта обнаружена';
 
+    const messages = msgCount > 0
+      ? chat.messages.slice(-10).map(msg => this.renderMessageLine(msg)).join('')
+      : '<div class="wv-dip-empty">Канал открыт. Сообщений пока нет.</div>';
+
+    const badge = msgCount > 0
+      ? `<span class="wv-dip-ch-badge">${msgCount}</span>`
+      : '';
+
     return `
-      <div class="wv-dip-channel">
-        <div class="wv-dip-channel-head">${esc(`${chat.playerAName} ↔ ${chat.playerBName}`)}</div>
-        <div class="wv-dip-channel-overlap">${esc(overlapLabel)}</div>
-        <div class="wv-dip-messages small">${messages}</div>
+      <div class="wv-dip-channel${isExpanded ? ' expanded' : ''}">
+        <div class="wv-dip-ch-toggle" data-channel-id="${esc(chat.channelId)}">
+          <span class="wv-dip-ch-names">${esc(`${chat.playerAName} ↔ ${chat.playerBName}`)}</span>
+          ${badge}
+          <span class="wv-dip-ch-arrow">${isExpanded ? '▾' : '▸'}</span>
+        </div>
+        <div class="wv-dip-ch-body">
+          <div class="wv-dip-channel-overlap">${esc(overlapLabel)}</div>
+          <div class="wv-dip-messages small">${messages}</div>
+        </div>
       </div>
     `;
   }
