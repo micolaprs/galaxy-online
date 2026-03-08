@@ -10,6 +10,7 @@ internal static partial class UiTextPolicy
             return string.Empty;
 
         var cleaned = text.ReplaceLineEndings("\n").Trim();
+        cleaned = StripXmlThinkTagsRegex().Replace(cleaned, "");   // <think>...</think>
         cleaned = StripThinkingBlocksRegex().Replace(cleaned, "");
         cleaned = StripReasoningInlineRegex().Replace(cleaned, "");
         cleaned = cleaned.Replace('\t', ' ');
@@ -22,6 +23,9 @@ internal static partial class UiTextPolicy
 
         return cleaned;
     }
+
+    [GeneratedRegex(@"(?is)<think>.*?</think>\s*")]
+    private static partial Regex StripXmlThinkTagsRegex();
 
     [GeneratedRegex(@"(?is)(^|\n)\s*(thinking process|analysis|reasoning)\s*:.*?(?=\n\s*(final|answer|итог|summary)\s*:|\z)")]
     private static partial Regex StripThinkingBlocksRegex();

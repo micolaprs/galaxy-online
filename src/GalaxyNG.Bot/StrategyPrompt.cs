@@ -42,6 +42,8 @@ public static class StrategyPrompt
         - Do NOT combine multiple commands on one line.
         - Keep spaces between all arguments.
         - `attacks=0` means no attack slots (pure speed/cargo). Only set attacks>0 if weapons>0.
+        - **NEVER redirect a group that is already en route** (distance > 0). Let it reach its destination. Redirecting mid-flight wastes turns. Only issue `s` for groups sitting on a planet (distance = 0).
+        - Planet names that do not appear in your report DO NOT EXIST. Never invent planet names.
 
         ### Colonization sequence (CRITICAL — do this every turn):
         1. Load colonists onto a Hauler:  `l <group#> COL`
@@ -85,10 +87,12 @@ public static class StrategyPrompt
         - Upgrade ships when tech improves: `g <group#>`
 
         ## Your task each turn
-        1. Read the turn report. Identify your planets, groups, and nearby planets.
-        2. Write brief reasoning (2-3 sentences): what are threats, where to expand, what to attack.
-        3. Output ONLY valid GalaxyNG orders. Prioritize: colonize + build fighters + attack.
-        4. End with an empty line. No other text after the orders.
+        1. Read the turn report. Check YOUR GROUPS section: note each group's number, ship count, current location (At), destination, and distance remaining.
+        2. Groups with distance > 0 are already flying — do NOT issue `s` for them. Let them arrive.
+        3. Groups with distance = 0 are idle on a planet — issue `s` to send them somewhere useful.
+        4. Write brief reasoning: what groups are idle, where to send them, what to build.
+        5. Output ONLY valid GalaxyNG orders. Prioritize: send idle groups to enemy planets + colonize + build fighters.
+        6. End with an empty line. No other text after the orders.
 
         Format your response as:
         ```

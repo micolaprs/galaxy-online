@@ -167,10 +167,11 @@ public sealed class LlmService(IConfiguration config, ILogger<LlmService> logger
         {
             var payload = new
             {
-                model       = _model,
-                temperature = _temp,
-                max_tokens  = maxTokens,
-                messages    = new[]
+                model            = _model,
+                temperature      = _temp,
+                max_tokens       = maxTokens,
+                enable_thinking  = false,   // suppress <think> blocks (Qwen3/LM Studio)
+                messages         = new[]
                 {
                     new { role = "system", content = systemPrompt },
                     new { role = "user",   content = userPrompt   },

@@ -56,10 +56,11 @@ public sealed class LlmClient(HttpClient http, LlmConfig config, ILogger<LlmClie
     {
         var request = new
         {
-            model       = config.Model,
-            messages    = messages.Select(m => new { role = m.Role, content = m.Content }),
-            temperature = config.Temperature,
-            max_tokens  = config.MaxTokens,
+            model            = config.Model,
+            messages         = messages.Select(m => new { role = m.Role, content = m.Content }),
+            temperature      = config.Temperature,
+            max_tokens       = config.MaxTokens,
+            enable_thinking  = false,   // suppress <think> blocks (Qwen3/LM Studio)
         };
 
         using var response = await http.PostAsJsonAsync("chat/completions", request, JsonOpts, ct);
