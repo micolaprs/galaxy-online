@@ -174,31 +174,26 @@ public sealed class ReportGenerator
 
         private void AlienPlanets()
         {
-            // Planets where player has ships with intel
-            var visible = VisiblePlanetNames();
             var withIntel = game.Planets.Values
-                .Where(p => p.OwnerId != player.Id && p.IsOwned &&
-                            visible.Contains(p.Name))
+                .Where(p => p.IsOwned && p.OwnerId != player.Id)
                 .ToList();
             if (withIntel.Count == 0) return;
-            Section("ALIEN PLANETS (WITH INTEL)");
+            Section("ALIEN PLANETS");
             foreach (var p in withIntel)
             {
                 var owner = p.OwnerId is not null ? game.Players.GetValueOrDefault(p.OwnerId)?.Name ?? "?" : "?";
-                Line($"  {p.Name} ({owner}) — Size: {p.Size:F1}  Pop: {p.Population:F1}  Ind: {p.Industry:F1}  Res: {p.Resources:F2}");
+                Line($"  {p.Name} ({owner})  X:{p.X:F1} Y:{p.Y:F1}  Size:{p.Size:F1}  Pop:{p.Population:F1}  Ind:{p.Industry:F1}  Res:{p.Resources:F2}");
             }
             Line();
         }
 
         private void UninhabitedPlanets()
         {
-            var visibleNames = VisiblePlanetNames();
             var visible = game.Planets.Values
-                .Where(p => !p.IsOwned &&
-                            visibleNames.Contains(p.Name))
+                .Where(p => !p.IsOwned)
                 .ToList();
             if (visible.Count == 0) return;
-            Section("UNINHABITED PLANETS (SCOUTED)");
+            Section("UNINHABITED PLANETS");
             foreach (var p in visible)
                 Line($"  {p.Name}  X:{p.X:F1} Y:{p.Y:F1}  Size:{p.Size:F1}  Res:{p.Resources:F2}");
             Line();
@@ -211,37 +206,25 @@ public sealed class ReportGenerator
         private List<(string race, ShipType st)> VisibleAlienShipTypes()
         {
             var visible = new List<(string, ShipType)>();
-            var knownPlanets = VisiblePlanetNames();
+            var homePlanets = game.Planets.Values
+                .Where(p => p.OwnerId == player.Id && p.IsHome)
+                .ToList();
+            if (homePlanets.Count == 0)
+                homePlanets = PlayerPlanets().ToList();
 
             foreach (var other in game.Players.Values.Where(p => p.Id != player.Id))
-            foreach (var g in other.Groups.Where(g => !g.InHyperspace && knownPlanets.Contains(g.At)))
+            foreach (var g in other.Groups.Where(g => !g.InHyperspace))
             {
+                if (!game.Planets.TryGetValue(g.At, out var fleetPlanet))
+                    continue;
+                var isVisible = homePlanets.Any(home => home.DistanceTo(fleetPlanet) <= HomeFleetVisibilityRadius);
+                if (!isVisible)
+                    continue;
                 if (other.ShipTypes.TryGetValue(g.ShipTypeName, out var st))
                     visible.Add((other.Name, st));
             }
 
             return visible.DistinctBy(x => (x.Item1, x.Item2.Name)).ToList();
-        }
-
-        private HashSet<string> VisiblePlanetNames()
-        {
-            var allies = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { player.Id };
-            foreach (var allyId in player.Allies)
-            {
-                if (player.AllianceUntilTurn.TryGetValue(allyId, out var until) && game.Turn <= until)
-                    allies.Add(allyId);
-            }
-
-            var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            foreach (var id in allies)
-            {
-                if (!game.Players.TryGetValue(id, out var p)) continue;
-                foreach (var planet in game.PlanetsOwnedBy(p.Id))
-                    names.Add(planet.Name);
-                foreach (var group in p.Groups.Where(g => !g.InHyperspace))
-                    names.Add(group.At);
-            }
-            return names;
         }
 
         private void Section(string title)

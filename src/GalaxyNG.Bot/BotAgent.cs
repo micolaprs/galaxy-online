@@ -1271,23 +1271,41 @@ public sealed class BotAgent(
     private static List<string> ParsePlanetNamesFromReport(string report)
     {
         var result = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        string section = "";
         foreach (var raw in report.ReplaceLineEndings("\n").Split('\n'))
         {
             var line = raw.Trim();
             if (string.IsNullOrWhiteSpace(line))
                 continue;
-            if (line.StartsWith("=") || line.StartsWith("#") || line.StartsWith("Name", StringComparison.OrdinalIgnoreCase))
+
+            if (line.StartsWith("= "))
+            {
+                section = line[2..].Trim().ToUpperInvariant();
+                continue;
+            }
+            if (line.StartsWith("#") || line.StartsWith("Name", StringComparison.OrdinalIgnoreCase))
                 continue;
 
-            var parts = Regex.Split(line, @"\s+");
-            if (parts.Length < 3)
+            if (section.Contains("YOUR PLANETS", StringComparison.Ordinal))
+            {
+                var parts = Regex.Split(line, @"\s+");
+                if (parts.Length < 3)
+                    continue;
+                if (!double.TryParse(parts[1], NumberStyles.Any, CultureInfo.InvariantCulture, out _))
+                    continue;
+                if (!double.TryParse(parts[2], NumberStyles.Any, CultureInfo.InvariantCulture, out _))
+                    continue;
+                result.Add(parts[0]);
                 continue;
-            if (!double.TryParse(parts[1], NumberStyles.Any, CultureInfo.InvariantCulture, out _))
-                continue;
-            if (!double.TryParse(parts[2], NumberStyles.Any, CultureInfo.InvariantCulture, out _))
-                continue;
+            }
 
-            result.Add(parts[0]);
+            if (section.Contains("ALIEN PLANETS", StringComparison.Ordinal) ||
+                section.Contains("UNINHABITED PLANETS", StringComparison.Ordinal))
+            {
+                var parts = Regex.Split(line, @"\s+");
+                if (parts.Length > 0)
+                    result.Add(parts[0]);
+            }
         }
 
         return result.OrderBy(x => x, StringComparer.OrdinalIgnoreCase).ToList();
@@ -1312,7 +1330,7 @@ public sealed class BotAgent(
 
         return $"""
             STRICT TOKEN CONSTRAINTS (current turn):
-            - Allowed planets for `s`/`r`/`p`: {planets}
+            - Known planets from current report (strict for `p`, advisory for `s`/`r`): {planets}
             - Allowed production values for `p`: {prod}
             - Exact ship names from your designs: {ships}
             - Allowed cargo values: {cargo}
@@ -1379,8 +1397,6 @@ public sealed class BotAgent(
             {
                 if (!int.TryParse(parts[1], out var g) || (allowedGroups.Count > 0 && !allowedGroups.Contains(g)))
                     problems.Add($"unknown group in s: {parts[1]}");
-                if (!allowedPlanets.Contains(parts[2]))
-                    problems.Add($"unknown planet in s: {parts[2]} (try: {SuggestToken(parts[2], ctx.KnownPlanetNames)})");
             }
             else if (cmd == "l" && parts.Length >= 3)
             {
@@ -1391,12 +1407,8 @@ public sealed class BotAgent(
             }
             else if (cmd == "r" && parts.Length >= 4)
             {
-                if (!allowedPlanets.Contains(parts[1]))
-                    problems.Add($"unknown route planet: {parts[1]} (try: {SuggestToken(parts[1], ctx.KnownPlanetNames)})");
                 if (!allowedCargo.Contains(parts[2]))
                     problems.Add($"unknown route cargo: {parts[2]} (try: {SuggestToken(parts[2], ctx.AllowedCargoTypes)})");
-                if (!allowedPlanets.Contains(parts[3]))
-                    problems.Add($"unknown route destination: {parts[3]} (try: {SuggestToken(parts[3], ctx.KnownPlanetNames)})");
             }
         }
 
@@ -1445,9 +1457,7 @@ public sealed class BotAgent(
             }
             else if (cmd == "s" && parts.Count >= 3)
             {
-                parts[2] = CanonicalizeToken(parts[2], ctx.KnownPlanetNames);
-                keep = int.TryParse(parts[1], out var g) && (allowedGroups.Count == 0 || allowedGroups.Contains(g))
-                    && ctx.KnownPlanetNames.Contains(parts[2], StringComparer.OrdinalIgnoreCase);
+                keep = int.TryParse(parts[1], out var g) && (allowedGroups.Count == 0 || allowedGroups.Contains(g));
             }
             else if (cmd == "l" && parts.Count >= 3)
             {
@@ -1458,12 +1468,8 @@ public sealed class BotAgent(
             }
             else if (cmd == "r" && parts.Count >= 4)
             {
-                parts[1] = CanonicalizeToken(parts[1], ctx.KnownPlanetNames);
                 parts[2] = CanonicalizeToken(parts[2], ctx.AllowedCargoTypes);
-                parts[3] = CanonicalizeToken(parts[3], ctx.KnownPlanetNames);
-                keep = ctx.KnownPlanetNames.Contains(parts[1], StringComparer.OrdinalIgnoreCase)
-                    && ctx.AllowedCargoTypes.Contains(parts[2], StringComparer.OrdinalIgnoreCase)
-                    && ctx.KnownPlanetNames.Contains(parts[3], StringComparer.OrdinalIgnoreCase);
+                keep = ctx.AllowedCargoTypes.Contains(parts[2], StringComparer.OrdinalIgnoreCase);
             }
 
             if (!keep)
@@ -1529,7 +1535,7 @@ public sealed class BotAgent(
             }
             else if (cmd == "s" && parts.Count >= 3)
             {
-                fixes += CanonicalizeTokenInPlace(parts, 2, ctx.KnownPlanetNames);
+                // Keep movement destination untouched; server-side validator decides validity.
             }
             else if (cmd == "l" && parts.Count >= 3)
             {
@@ -1537,9 +1543,8 @@ public sealed class BotAgent(
             }
             else if (cmd == "r" && parts.Count >= 4)
             {
-                fixes += CanonicalizeTokenInPlace(parts, 1, ctx.KnownPlanetNames);
                 fixes += CanonicalizeTokenInPlace(parts, 2, ctx.AllowedCargoTypes);
-                fixes += CanonicalizeTokenInPlace(parts, 3, ctx.KnownPlanetNames);
+                // Keep route endpoints untouched for the same reason.
             }
 
             lines.Add(string.Join(' ', parts));

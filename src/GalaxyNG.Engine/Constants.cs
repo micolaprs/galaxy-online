@@ -38,6 +38,7 @@ public static class Constants
     // Home planet
     public const double HomeResources = 10.0;
     public const double HomeSize      = 500.0;
+    public const double HomeFleetVisibilityRadius = 30.0;
 
     // Limits
     public const int MaxNameLength = 20;
