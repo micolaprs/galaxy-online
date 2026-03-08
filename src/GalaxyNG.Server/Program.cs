@@ -26,6 +26,13 @@ builder.Services.AddSingleton<TurnProcessor>(sp => new TurnProcessor(
 
 // Server services
 builder.Services.AddSingleton<GameStore>();
+var llmProvider = (builder.Configuration["Llm:Provider"] ?? "openai/codex").Trim().ToLowerInvariant();
+if (llmProvider is "openai/codex" or "openai-codex")
+    builder.Services.AddSingleton<ILlmProvider, CodexLlmProvider>();
+else if (llmProvider is "lmstudio" or "lm-studio")
+    builder.Services.AddSingleton<ILlmProvider, LmStudioLlmProvider>();
+else
+    throw new InvalidOperationException($"Unsupported Llm:Provider '{llmProvider}'. Supported: openai/codex, lmstudio.");
 builder.Services.AddSingleton<LlmService>();
 builder.Services.AddSingleton<GameService>();
 

@@ -185,7 +185,6 @@ PY
 
   # Server LLM defaults are synchronized with bot LLM so summaries use same provider.
   SERVER_LLM_PROVIDER="$BOT_LLM_PROVIDER"
-  SERVER_LLM_API="$BOT_LLM_API"
   SERVER_LLM_BASE_URL="$BOT_LLM_BASE_URL"
   SERVER_LLM_MODEL="${GALAXYNG_SERVER_LLM_MODEL:-$BOT_LLM_MODEL}"
   SERVER_LLM_API_KEY="${GALAXYNG_SERVER_LLM_API_KEY:-$BOT_LLM_API_KEY}"
@@ -302,7 +301,6 @@ if curl -sf "$SERVER_URL/api/games" > /dev/null 2>&1; then
   warn "Сервер уже работает на $SERVER_URL — используем существующий"
 else
   Llm__Provider="$SERVER_LLM_PROVIDER" \
-  Llm__Api="$SERVER_LLM_API" \
   Llm__BaseUrl="$SERVER_LLM_BASE_URL" \
   Llm__Model="$SERVER_LLM_MODEL" \
   Llm__ApiKey="$SERVER_LLM_API_KEY" \
