@@ -32,6 +32,31 @@ public sealed class GameTools(GameService svc)
     }
 
     [McpServerTool, Description(
+        "Get current turn state for a race: turn number, game finished flag, winner, and whether this race already submitted final orders.")]
+    public async Task<string> GetTurnState(
+        [Description("Game ID")] string gameId,
+        [Description("Your race name")] string raceName,
+        [Description("Your password")] string password,
+        CancellationToken ct = default)
+    {
+        var game = await svc.GetGameAsync(gameId, ct);
+        if (game is null) return """{"error":"game_not_found"}""";
+
+        var player = game.GetPlayer(raceName);
+        if (player is null || player.Password != password)
+            return """{"error":"auth_failed"}""";
+
+        var payload = new
+        {
+            turn = game.Turn,
+            isFinished = game.IsFinished,
+            winnerName = game.WinnerName,
+            mySubmitted = player.Submitted,
+        };
+        return System.Text.Json.JsonSerializer.Serialize(payload);
+    }
+
+    [McpServerTool, Description(
         "Get the full turn report for your race. Contains: your planets, groups, fleets, alien intel, battles, bombings, and an ASCII map.")]
     public async Task<string> GetTurnReport(
         [Description("Game ID")] string gameId,
@@ -41,6 +66,20 @@ public sealed class GameTools(GameService svc)
     {
         var report = await svc.GetReportAsync(gameId, raceName, password, ct);
         return report ?? "Authentication failed or game not found.";
+    }
+
+    [McpServerTool, Description(
+        "Report bot activity status for UI/observer panels (reading-report, thinking, validating, submitted, etc.).")]
+    public async Task<string> ReportBotStatus(
+        [Description("Game ID")] string gameId,
+        [Description("Race name")] string raceName,
+        [Description("Status code")] string status,
+        [Description("Optional short detail text")] string? detail = null,
+        [Description("Optional reasoning/thinking text")] string? thinking = null,
+        CancellationToken ct = default)
+    {
+        await svc.BroadcastBotStatusAsync(gameId, raceName, status, detail, thinking, ct);
+        return "OK";
     }
 
     [McpServerTool, Description(

@@ -1,29 +1,32 @@
 using System.Text.RegularExpressions;
 using GalaxyNG.Engine.Services;
-using System.Net.Http.Json;
 using System.Text.Json;
 using System.Globalization;
 using Microsoft.Extensions.Logging;
+using ModelContextProtocol.Client;
+using ModelContextProtocol.Protocol;
 
 namespace GalaxyNG.Bot;
 
 /// <summary>
-/// LLM bot that plays GalaxyNG by interacting with the server REST API.
-/// On each turn: gets report → asks LLM for orders → validates → submits.
+/// LLM bot that plays GalaxyNG through MCP tools exposed by the game server.
 /// </summary>
 public sealed class BotAgent(
     BotConfig                config,
     LlmClient                llm,
-    IHttpClientFactory       httpFactory,
+    ILoggerFactory           loggerFactory,
     ILogger<BotAgent>        logger)
 {
     private readonly TimeSpan _llmTimeout = TimeSpan.FromSeconds(Math.Clamp(config.LlmTimeoutSeconds, 30, 300));
+    private readonly ILoggerFactory _loggerFactory = loggerFactory;
     private CommanderProfile? _commander;
     private readonly List<DiplomaticMemoryEntry> _myDiplomaticHistory = [];
     private bool _sentInitialGreeting;
     private bool _retired;
     private string _lastValidationErrors = "";
     private TurnToolContext? _turnToolContext;
+    private McpClient? _mcpClient;
+    private readonly SemaphoreSlim _mcpInitLock = new(1, 1);
 
     private static readonly IReadOnlyList<ToolDefinition> TurnTools =
     [
@@ -82,7 +85,7 @@ public sealed class BotAgent(
         int reportLines = report.Split('\n').Length;
         logger.LogInformation("📋 [{Race}] Отчёт получен ({Lines} строк)", config.RaceName, reportLines);
         await RefreshMyDiplomaticHistoryAsync(ct);
-        _turnToolContext = await BuildTurnToolContextAsync(turn, report, ct);
+        _turnToolContext = BuildTurnToolContext(turn, report);
 
         var checkpoint = await EvaluateCheckpointDecisionAsync(turn, report, ct);
         if (checkpoint.ShouldSurrender)
@@ -294,79 +297,136 @@ public sealed class BotAgent(
         }
     }
 
-    // ---- HTTP helpers ----
+    // ---- MCP helpers ----
 
-    private HttpClient Http => httpFactory.CreateClient("server");
+    private async Task<McpClient> GetMcpClientAsync(CancellationToken ct)
+    {
+        if (_mcpClient is not null)
+            return _mcpClient;
+
+        await _mcpInitLock.WaitAsync(ct);
+        try
+        {
+            if (_mcpClient is not null)
+                return _mcpClient;
+
+            var endpoint = new Uri($"{config.ServerUrl.TrimEnd('/')}/mcp");
+            var transport = new HttpClientTransport(new HttpClientTransportOptions
+            {
+                Endpoint = endpoint,
+                TransportMode = HttpTransportMode.AutoDetect,
+                Name = $"galaxyng-bot-{config.RaceName}",
+            }, _loggerFactory);
+
+            _mcpClient = await McpClient.CreateAsync(
+                clientTransport: transport,
+                clientOptions: null,
+                loggerFactory: _loggerFactory,
+                cancellationToken: ct);
+
+            return _mcpClient;
+        }
+        finally
+        {
+            _mcpInitLock.Release();
+        }
+    }
+
+    private async Task<string> CallMcpToolAsync(
+        string toolName,
+        IReadOnlyDictionary<string, object?> args,
+        CancellationToken ct)
+    {
+        var client = await GetMcpClientAsync(ct);
+        var result = await client.CallToolAsync(toolName, args, cancellationToken: ct);
+        var text = string.Concat(result.Content
+            .OfType<TextContentBlock>()
+            .Select(c => c.Text ?? ""));
+        var payload = text.Trim();
+
+        if (result.IsError.GetValueOrDefault(false))
+            throw new InvalidOperationException(string.IsNullOrWhiteSpace(payload) ? $"MCP tool error: {toolName}" : payload);
+
+        return payload;
+    }
 
     private async Task<string> GetReportAsync(CancellationToken ct)
     {
-        var url = $"{config.ServerUrl}/api/games/{config.GameId}/report/{Uri.EscapeDataString(config.RaceName)}?password={Uri.EscapeDataString(config.Password)}";
-        var response = await Http.GetAsync(url, ct);
-        return response.IsSuccessStatusCode ? await response.Content.ReadAsStringAsync(ct) : "";
+        try
+        {
+            var text = await CallMcpToolAsync("get_turn_report", new Dictionary<string, object?>
+            {
+                ["gameId"] = config.GameId,
+                ["raceName"] = config.RaceName,
+                ["password"] = config.Password,
+            }, ct);
+
+            return text.Contains("Authentication failed", StringComparison.OrdinalIgnoreCase) ? "" : text;
+        }
+        catch (Exception ex)
+        {
+            logger.LogDebug("Get turn report via MCP failed: {Msg}", ex.Message);
+            _mcpClient = null;
+            return "";
+        }
     }
 
     private async Task<string> ValidateOrdersAsync(string orders, CancellationToken ct)
     {
-        var url  = $"{config.ServerUrl}/api/games/{config.GameId}/validate-orders";
-        var body = new { raceName = config.RaceName, password = config.Password, orders };
         try
         {
-            using var response = await Http.PostAsJsonAsync(url, body, ct);
-            var json = await response.Content.ReadFromJsonAsync<JsonElement>(cancellationToken: ct);
-            if (json.TryGetProperty("valid", out var validProp) && validProp.GetBoolean())
-                return "OK";
+            var text = await CallMcpToolAsync("validate_orders", new Dictionary<string, object?>
+            {
+                ["gameId"] = config.GameId,
+                ["raceName"] = config.RaceName,
+                ["password"] = config.Password,
+                ["orders"] = orders,
+            }, ct);
 
-            // Collect error list from response
-            var errorList = new List<string>();
-            if (json.TryGetProperty("errors", out var errArr) && errArr.ValueKind == JsonValueKind.Array)
-                foreach (var e in errArr.EnumerateArray())
-                    if (e.GetString() is { } s) errorList.Add(s);
-
-            return errorList.Count > 0
-                ? "Errors:\n" + string.Join("\n", errorList.Select(e => $"  - {e}"))
-                : "Error: validation failed";
+            return text.StartsWith("OK", StringComparison.OrdinalIgnoreCase) ? "OK" : text;
         }
         catch (Exception ex)
         {
-            logger.LogDebug("Validate-orders call failed: {Msg}", ex.Message);
-            return "Error: could not reach server";
+            logger.LogDebug("Validate orders via MCP failed: {Msg}", ex.Message);
+            _mcpClient = null;
+            return "Error: could not reach MCP server";
         }
     }
 
     private async Task SubmitOrdersAsync(string orders, bool final, CancellationToken ct)
     {
-        var url = $"{config.ServerUrl}/api/games/{config.GameId}/orders";
-        var body = new { raceName = config.RaceName, password = config.Password, orders, final };
-        using var response = await Http.PostAsJsonAsync(url, body, ct);
-        if (!response.IsSuccessStatusCode)
+        var text = await CallMcpToolAsync("submit_orders", new Dictionary<string, object?>
         {
-            var text = await response.Content.ReadAsStringAsync(ct);
-            throw new HttpRequestException($"Orders submit failed: {(int)response.StatusCode} {response.ReasonPhrase}. Body: {text}");
-        }
+            ["gameId"] = config.GameId,
+            ["raceName"] = config.RaceName,
+            ["password"] = config.Password,
+            ["orders"] = orders,
+            ["final"] = final,
+        }, ct);
+
+        if (text.StartsWith("Error:", StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException($"Orders submit failed via MCP: {text}");
     }
 
     private async Task<GameStateSnapshot> GetCurrentTurnAsync(CancellationToken ct)
     {
-        var url  = $"{config.ServerUrl}/api/games/{config.GameId}";
-        var json = await Http.GetFromJsonAsync<JsonElement>(url, ct);
-        var mySubmitted = false;
-        if (json.TryGetProperty("players", out var players) && players.ValueKind == JsonValueKind.Array)
+        var text = await CallMcpToolAsync("get_turn_state", new Dictionary<string, object?>
         {
-            foreach (var p in players.EnumerateArray())
-            {
-                var name = p.TryGetProperty("name", out var n) ? n.GetString() ?? "" : "";
-                if (!name.Equals(config.RaceName, StringComparison.OrdinalIgnoreCase))
-                    continue;
-                mySubmitted = p.TryGetProperty("submitted", out var s) && s.ValueKind == JsonValueKind.True;
-                break;
-            }
-        }
+            ["gameId"] = config.GameId,
+            ["raceName"] = config.RaceName,
+            ["password"] = config.Password,
+        }, ct);
+
+        using var doc = JsonDocument.Parse(text);
+        var root = doc.RootElement;
+        if (root.TryGetProperty("error", out var errNode))
+            throw new InvalidOperationException($"MCP get_turn_state failed: {errNode.GetString()}");
 
         return new GameStateSnapshot(
-            Turn: json.GetProperty("turn").GetInt32(),
-            IsFinished: json.TryGetProperty("isFinished", out var finished) && finished.GetBoolean(),
-            MySubmitted: mySubmitted,
-            WinnerName: json.TryGetProperty("winnerName", out var winner) && winner.ValueKind == JsonValueKind.String
+            Turn: root.GetProperty("turn").GetInt32(),
+            IsFinished: root.TryGetProperty("isFinished", out var finished) && finished.GetBoolean(),
+            MySubmitted: root.TryGetProperty("mySubmitted", out var submitted) && submitted.GetBoolean(),
+            WinnerName: root.TryGetProperty("winnerName", out var winner) && winner.ValueKind == JsonValueKind.String
                 ? winner.GetString()
                 : null);
     }
@@ -378,13 +438,19 @@ public sealed class BotAgent(
     {
         try
         {
-            var url  = $"{config.ServerUrl}/api/games/{config.GameId}/bot-status";
-            var body = new { raceName = config.RaceName, status, detail, thinking };
-            await Http.PostAsJsonAsync(url, body, ct);
+            await CallMcpToolAsync("report_bot_status", new Dictionary<string, object?>
+            {
+                ["gameId"] = config.GameId,
+                ["raceName"] = config.RaceName,
+                ["status"] = status,
+                ["detail"] = detail ?? "",
+                ["thinking"] = thinking ?? "",
+            }, ct);
         }
         catch (Exception ex)
         {
-            logger.LogDebug("Could not post bot status: {Msg}", ex.Message);
+            logger.LogDebug("Could not post bot status via MCP: {Msg}", ex.Message);
+            _mcpClient = null;
         }
     }
 
@@ -570,7 +636,7 @@ public sealed class BotAgent(
 
         var home = myPlanets[0];
         var groups = ParseGroupNumbers(report);
-        var target = await FindNearestTargetPlanetAsync(home.Name, ct);
+        var target = FindNearestTargetPlanetFromReport(home.Name, report);
 
         var lines = new List<string> { "o AUTOUNLOAD" };
         var hasHaulerDesign  = ReportMentionsShipType(report, "Hauler");
@@ -619,29 +685,20 @@ public sealed class BotAgent(
         return await AppendDynamicDiplomacyAsync(string.Join('\n', lines), turn, report, ct);
     }
 
-    private async Task<string?> FindNearestTargetPlanetAsync(string homePlanet, CancellationToken ct)
+    private static string? FindNearestTargetPlanetFromReport(string homePlanet, string report)
     {
         try
         {
-            var url = $"{config.ServerUrl}/api/games/{config.GameId}/spectate";
-            var spectate = await Http.GetFromJsonAsync<JsonElement>(url, ct);
-            var planets = spectate.GetProperty("planets").EnumerateArray()
-                .Select(p => new PlanetSnapshot(
-                    Name: p.GetProperty("name").GetString() ?? "",
-                    X: p.GetProperty("x").GetDouble(),
-                    Y: p.GetProperty("y").GetDouble(),
-                    OwnerId: p.TryGetProperty("ownerId", out var owner) && owner.ValueKind != JsonValueKind.Null
-                        ? owner.GetString()
-                        : null))
-                .Where(p => !string.IsNullOrWhiteSpace(p.Name))
-                .ToList();
+            var planets = ParseScoutedPlanetSnapshots(report);
+            if (planets.Count == 0)
+                return null;
 
             var home = planets.FirstOrDefault(p => p.Name.Equals(homePlanet, StringComparison.OrdinalIgnoreCase));
             if (home is null)
                 return planets.FirstOrDefault()?.Name;
 
             var preferred = planets
-                .Where(p => !p.Name.Equals(home.Name, StringComparison.OrdinalIgnoreCase) && p.OwnerId is null)
+                .Where(p => !p.Name.Equals(home.Name, StringComparison.OrdinalIgnoreCase) && p.IsUninhabited)
                 .OrderBy(p => Distance(home, p))
                 .FirstOrDefault();
             if (preferred is not null)
@@ -653,9 +710,8 @@ public sealed class BotAgent(
                 .Select(p => p.Name)
                 .FirstOrDefault();
         }
-        catch (Exception ex)
+        catch
         {
-            logger.LogDebug("Could not find opening nearest target planet: {Msg}", ex.Message);
             return null;
         }
     }
@@ -734,6 +790,93 @@ public sealed class BotAgent(
         return result;
     }
 
+    private static List<PlanetSnapshot> ParseScoutedPlanetSnapshots(string report)
+    {
+        var snapshots = new Dictionary<string, PlanetSnapshot>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var p in ParseMyPlanets(report))
+            snapshots[p.Name] = new PlanetSnapshot(p.Name, p.X, p.Y, OwnerKnown: true, IsUninhabited: false);
+
+        var lines = report.ReplaceLineEndings("\n").Split('\n');
+        var inSection = false;
+        foreach (var raw in lines)
+        {
+            var line = raw.Trim();
+            if (line.StartsWith("= UNINHABITED PLANETS", StringComparison.OrdinalIgnoreCase))
+            {
+                inSection = true;
+                continue;
+            }
+
+            if (inSection && line.StartsWith("="))
+                break;
+            if (!inSection || string.IsNullOrWhiteSpace(line))
+                continue;
+
+            var m = Regex.Match(line, @"^(?<name>\S+)\s+X:(?<x>-?\d+(?:\.\d+)?)\s+Y:(?<y>-?\d+(?:\.\d+)?)\b",
+                RegexOptions.IgnoreCase);
+            if (!m.Success)
+                continue;
+
+            if (!double.TryParse(m.Groups["x"].Value, NumberStyles.Any, CultureInfo.InvariantCulture, out var x) ||
+                !double.TryParse(m.Groups["y"].Value, NumberStyles.Any, CultureInfo.InvariantCulture, out var y))
+                continue;
+
+            var name = m.Groups["name"].Value;
+            snapshots[name] = new PlanetSnapshot(name, x, y, OwnerKnown: true, IsUninhabited: true);
+        }
+
+        return snapshots.Values.ToList();
+    }
+
+    private static List<StatusRow> ParseStatusRowsFromReport(string report)
+    {
+        var rows = new List<StatusRow>();
+        var lines = report.ReplaceLineEndings("\n").Split('\n');
+        var inStatus = false;
+
+        foreach (var raw in lines)
+        {
+            var line = raw.TrimEnd();
+            if (line.StartsWith("= STATUS OF PLAYERS", StringComparison.OrdinalIgnoreCase))
+            {
+                inStatus = true;
+                continue;
+            }
+
+            if (inStatus && line.StartsWith("="))
+                break;
+            if (!inStatus || string.IsNullOrWhiteSpace(line))
+                continue;
+            if (line.StartsWith("Race", StringComparison.OrdinalIgnoreCase) || line.StartsWith("-", StringComparison.Ordinal))
+                continue;
+
+            var m = Regex.Match(line.Trim(),
+                @"^(?<race>.+?)\s+(?<drive>-?\d+(?:\.\d+)?)\s+(?<wpn>-?\d+(?:\.\d+)?)\s+(?<shd>-?\d+(?:\.\d+)?)\s+(?<cargo>-?\d+(?:\.\d+)?)\s+(?<pops>-?\d+(?:\.\d+)?)\s+(?<ind>-?\d+(?:\.\d+)?)\s+(?<plnts>-?\d+)\s*$");
+            if (!m.Success)
+                continue;
+
+            var race = Regex.Replace(m.Groups["race"].Value, @"\s*\[[^\]]+\]\s*", " ").Trim();
+            if (string.IsNullOrWhiteSpace(race))
+                continue;
+
+            if (!double.TryParse(m.Groups["drive"].Value, NumberStyles.Any, CultureInfo.InvariantCulture, out var drive) ||
+                !double.TryParse(m.Groups["wpn"].Value, NumberStyles.Any, CultureInfo.InvariantCulture, out var wpn) ||
+                !double.TryParse(m.Groups["shd"].Value, NumberStyles.Any, CultureInfo.InvariantCulture, out var shd) ||
+                !double.TryParse(m.Groups["cargo"].Value, NumberStyles.Any, CultureInfo.InvariantCulture, out var cargo) ||
+                !int.TryParse(m.Groups["plnts"].Value, NumberStyles.Any, CultureInfo.InvariantCulture, out var plnts))
+                continue;
+
+            rows.Add(new StatusRow(
+                Name: race,
+                PlanetCount: Math.Max(0, plnts),
+                IsEliminated: plnts <= 0,
+                TechPower: drive + wpn + shd + cargo));
+        }
+
+        return rows;
+    }
+
     private static List<int> ParseGroupNumbers(string report)
     {
         var lines = report.ReplaceLineEndings("\n").Split('\n');
@@ -772,20 +915,12 @@ public sealed class BotAgent(
 
         try
         {
-            var spectateUrl = $"{config.ServerUrl}/api/games/{config.GameId}/spectate";
-            var spectate = await Http.GetFromJsonAsync<JsonElement>(spectateUrl, ct);
-            var players = spectate.GetProperty("players").EnumerateArray()
+            var players = ParseStatusRowsFromReport(report)
                 .Select(p => new PlayerCheckpointStat(
-                    Id: p.GetProperty("id").GetString() ?? "",
-                    Name: p.GetProperty("name").GetString() ?? "",
-                    PlanetCount: p.GetProperty("planetCount").GetInt32(),
-                    IsEliminated: p.GetProperty("isEliminated").GetBoolean(),
-                    TechPower:
-                        p.GetProperty("tech").GetProperty("drive").GetDouble()
-                      + p.GetProperty("tech").GetProperty("weapons").GetDouble()
-                      + p.GetProperty("tech").GetProperty("shields").GetDouble()
-                      + p.GetProperty("tech").GetProperty("cargo").GetDouble()))
-                .Where(p => !string.IsNullOrWhiteSpace(p.Id))
+                    Name: p.Name,
+                    PlanetCount: p.PlanetCount,
+                    IsEliminated: p.IsEliminated,
+                    TechPower: p.TechPower))
                 .ToList();
 
             var me = players.FirstOrDefault(p => p.Name.Equals(config.RaceName, StringComparison.OrdinalIgnoreCase));
@@ -938,46 +1073,10 @@ public sealed class BotAgent(
         return result;
     }
 
-    private async Task<DiplomacyContext?> GetDiplomacyContextAsync(CancellationToken ct)
+    private Task<DiplomacyContext?> GetDiplomacyContextAsync(CancellationToken ct)
     {
-        try
-        {
-            var url = $"{config.ServerUrl}/api/games/{config.GameId}/spectate";
-            var spectate = await Http.GetFromJsonAsync<JsonElement>(url, ct);
-            var players = spectate.GetProperty("players").EnumerateArray().ToList();
-            var me = players.FirstOrDefault(p =>
-                string.Equals(p.GetProperty("name").GetString(), config.RaceName, StringComparison.OrdinalIgnoreCase));
-            if (me.ValueKind == JsonValueKind.Undefined)
-                return null;
-
-            var myId = me.GetProperty("id").GetString();
-            if (string.IsNullOrWhiteSpace(myId))
-                return null;
-
-            var contacts = new List<string>();
-            if (spectate.TryGetProperty("diplomacy", out var diplomacy)
-                && diplomacy.TryGetProperty("privateChats", out var privateChats))
-            {
-                foreach (var chat in privateChats.EnumerateArray())
-                {
-                    var aId = chat.GetProperty("playerAId").GetString() ?? "";
-                    var bId = chat.GetProperty("playerBId").GetString() ?? "";
-                    var aName = chat.GetProperty("playerAName").GetString() ?? "";
-                    var bName = chat.GetProperty("playerBName").GetString() ?? "";
-                    if (string.Equals(aId, myId, StringComparison.OrdinalIgnoreCase) && !string.IsNullOrWhiteSpace(bName))
-                        contacts.Add(bName);
-                    else if (string.Equals(bId, myId, StringComparison.OrdinalIgnoreCase) && !string.IsNullOrWhiteSpace(aName))
-                        contacts.Add(aName);
-                }
-            }
-
-            return new DiplomacyContext([.. contacts.Distinct(StringComparer.OrdinalIgnoreCase)]);
-        }
-        catch (Exception ex)
-        {
-            logger.LogDebug("Could not load diplomacy context: {Msg}", ex.Message);
-            return null;
-        }
+        _ = ct;
+        return Task.FromResult<DiplomacyContext?>(null);
     }
 
     private async Task EnsureCommanderProfileAsync(CancellationToken ct)
@@ -1020,39 +1119,10 @@ public sealed class BotAgent(
         _commander ??= CommanderProfile.Fallback(config.RaceName);
     }
 
-    private async Task RefreshMyDiplomaticHistoryAsync(CancellationToken ct)
+    private Task RefreshMyDiplomaticHistoryAsync(CancellationToken ct)
     {
-        try
-        {
-            var url = $"{config.ServerUrl}/api/games/{config.GameId}/spectate";
-            var spectate = await Http.GetFromJsonAsync<JsonElement>(url, ct);
-            if (!spectate.TryGetProperty("diplomacy", out var diplomacy))
-                return;
-
-            var entries = new List<DiplomaticMemoryEntry>();
-            if (diplomacy.TryGetProperty("globalMessages", out var globals))
-            {
-                foreach (var m in globals.EnumerateArray())
-                {
-                    var sender = m.TryGetProperty("senderName", out var sn) ? sn.GetString() ?? "" : "";
-                    if (!sender.Equals(config.RaceName, StringComparison.OrdinalIgnoreCase))
-                        continue;
-                    var text = m.TryGetProperty("text", out var t) ? t.GetString() ?? "" : "";
-                    var turn = m.TryGetProperty("turn", out var trn) ? trn.GetInt32() : 0;
-                    if (!string.IsNullOrWhiteSpace(text))
-                        entries.Add(new DiplomaticMemoryEntry(turn, text, false));
-                    if (turn == 0)
-                        _sentInitialGreeting = true;
-                }
-            }
-
-            _myDiplomaticHistory.Clear();
-            _myDiplomaticHistory.AddRange(entries.OrderBy(e => e.Turn).TakeLast(20));
-        }
-        catch (Exception ex)
-        {
-            logger.LogDebug("Could not refresh diplomatic history: {Msg}", ex.Message);
-        }
+        _ = ct;
+        return Task.CompletedTask;
     }
 
     private async Task<string> GenerateBroadcastMessageAsync(string intent, int turn, CancellationToken ct)
@@ -1176,14 +1246,12 @@ public sealed class BotAgent(
         return $"Error: unknown tool '{name}'.";
     }
 
-    private async Task<TurnToolContext> BuildTurnToolContextAsync(int turn, string report, CancellationToken ct)
+    private TurnToolContext BuildTurnToolContext(int turn, string report)
     {
         var designedShips = ExtractDesignedShipNames(report)
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
-        var knownPlanets = await GetKnownPlanetNamesFromSpectateAsync(ct);
-        if (knownPlanets.Count == 0)
-            knownPlanets = ParsePlanetNamesFromReport(report);
+        var knownPlanets = ParsePlanetNamesFromReport(report);
         var groupNumbers = ParseGroupNumbers(report);
 
         var allowedProduction = new List<string> { "CAP", "MAT", "DRIVE", "WEAPONS", "SHIELDS", "CARGO" };
@@ -1198,30 +1266,6 @@ public sealed class BotAgent(
             AllowedProductionTypes: allowedProduction,
             AllowedCargoTypes: new List<string> { "CAP", "COL", "MAT", "EMPTY" },
             GroupNumbers: groupNumbers);
-    }
-
-    private async Task<List<string>> GetKnownPlanetNamesFromSpectateAsync(CancellationToken ct)
-    {
-        try
-        {
-            var url = $"{config.ServerUrl}/api/games/{config.GameId}/spectate";
-            var spectate = await Http.GetFromJsonAsync<JsonElement>(url, ct);
-            if (!spectate.TryGetProperty("planets", out var planets) || planets.ValueKind != JsonValueKind.Array)
-                return [];
-
-            return planets.EnumerateArray()
-                .Select(p => p.TryGetProperty("name", out var n) ? n.GetString() : null)
-                .Where(n => !string.IsNullOrWhiteSpace(n))
-                .Select(n => n!)
-                .Distinct(StringComparer.OrdinalIgnoreCase)
-                .OrderBy(n => n, StringComparer.OrdinalIgnoreCase)
-                .ToList();
-        }
-        catch (Exception ex)
-        {
-            logger.LogDebug("Could not load planets from spectate for tool context: {Msg}", ex.Message);
-            return [];
-        }
     }
 
     private static List<string> ParsePlanetNamesFromReport(string report)
@@ -1595,8 +1639,9 @@ public sealed class BotAgent(
         }
     }
 
-    private sealed record PlanetSnapshot(string Name, double X, double Y, string? OwnerId);
-    private sealed record PlayerCheckpointStat(string Id, string Name, int PlanetCount, bool IsEliminated, double TechPower);
+    private sealed record PlanetSnapshot(string Name, double X, double Y, bool OwnerKnown, bool IsUninhabited);
+    private sealed record PlayerCheckpointStat(string Name, int PlanetCount, bool IsEliminated, double TechPower);
+    private sealed record StatusRow(string Name, int PlanetCount, bool IsEliminated, double TechPower);
     private sealed record GameStateSnapshot(int Turn, bool IsFinished, bool MySubmitted, string? WinnerName);
     private sealed record TurnToolContext(
         int Turn,

@@ -49,8 +49,6 @@ var host = Host.CreateDefaultBuilder(args)
             }
         });
 
-        services.AddHttpClient("server");
-
         services.AddSingleton<LlmClient>(sp =>
         {
             var factory = sp.GetRequiredService<IHttpClientFactory>();
