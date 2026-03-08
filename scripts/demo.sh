@@ -79,8 +79,18 @@ GAME_NAME="Demo"
 HUMAN="Humans"
 HUMAN_PW="pw1"
 
-BOT_NAME_POOL=("Alpha" "Beta" "Gamma" "Delta" "Epsilon" "Zeta" "Eta" "Theta")
-BOT_PW_POOL=("pw1" "pw2" "pw3" "pw4" "pw5" "pw6" "pw7" "pw8")
+_BASE_NAMES=("Alpha" "Beta" "Gamma" "Delta" "Epsilon" "Zeta" "Eta" "Theta"
+             "Iota" "Kappa" "Lambda" "Mu" "Nu" "Xi" "Omicron" "Pi"
+             "Rho" "Sigma" "Tau" "Upsilon" "Phi" "Chi" "Psi" "Omega")
+BOT_NAME_POOL=(); BOT_PW_POOL=()
+for _idx in $(seq 0 $((NUM_BOTS + 1))); do
+  if [[ $_idx -lt ${#_BASE_NAMES[@]} ]]; then
+    BOT_NAME_POOL+=("${_BASE_NAMES[$_idx]}")
+  else
+    BOT_NAME_POOL+=("Bot$((_idx + 1))")
+  fi
+  BOT_PW_POOL+=("pw$((_idx + 1))")
+done
 
 if $BOTS_ONLY; then
   ALL_NAMES=(); ALL_PWS=(); BOT_NAMES=(); BOT_PWS=()
