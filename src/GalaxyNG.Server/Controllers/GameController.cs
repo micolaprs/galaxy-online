@@ -24,8 +24,21 @@ public sealed class GameController(GameService svc) : ControllerBase
             StuffPlanets = req.StuffPlanets ?? 5,
         } : null;
 
+        // Auto-compute maxTurns from galaxy size when not specified:
+        // maxTurns = galaxySize * 0.30 (e.g. 200→60, 300→90, 400→120)
+        int maxTurns;
+        if (req.MaxTurns is > 0)
+        {
+            maxTurns = req.MaxTurns.Value;
+        }
+        else
+        {
+            var effectiveOpts = opts ?? GalaxyGenerator.DefaultOptions(req.Players.Count);
+            maxTurns = (int)Math.Round(effectiveOpts.GalaxySize * 0.30);
+        }
+
         var players = req.Players.Select(p => (p.Name, p.Password, p.IsBot)).ToList();
-        var game = await svc.CreateGameAsync(req.Name, players, opts, req.AutoRun, req.MaxTurns ?? 9999, ct);
+        var game = await svc.CreateGameAsync(req.Name, players, opts, req.AutoRun, maxTurns, ct);
 
         var baseUrl = $"{Request.Scheme}://{Request.Host}";
         return Created($"{baseUrl}/api/games/{game.Id}", new
@@ -106,6 +119,32 @@ public sealed class GameController(GameService svc) : ControllerBase
     {
         var forecast = await svc.GetForecastAsync(id, race, password, orders, ct);
         return forecast is null ? NotFound() : Content(forecast, "text/plain");
+    }
+
+    // POST /api/games/{id}/validate-orders — validate orders and return structured errors
+    [HttpPost("{id}/validate-orders")]
+    public async Task<IActionResult> ValidateOrders(string id, [FromBody] ValidateOrdersRequest req, CancellationToken ct)
+    {
+        var game = await svc.GetGameAsync(id, ct);
+        if (game is null) return NotFound();
+
+        var player = game.Players.Values.FirstOrDefault(p =>
+            string.Equals(p.Name, req.RaceName, StringComparison.OrdinalIgnoreCase));
+        if (player is null) return NotFound(new { error = $"Player '{req.RaceName}' not found." });
+        if (player.Password != req.Password) return Unauthorized(new { error = "Wrong password." });
+
+        var (parsed, parseErrors) = new GalaxyNG.Engine.Services.OrderParser().Parse(req.Orders ?? "");
+        var validator = new GalaxyNG.Engine.Services.OrderValidator(game, player);
+        var results = validator.ValidateAll(parsed);
+        var allErrors = parseErrors
+            .Concat(results.Where(r => !r.Ok).Select(r => r.Error ?? "Unknown error"))
+            .ToList();
+
+        return Ok(new
+        {
+            valid  = allErrors.Count == 0,
+            errors = allErrors,
+        });
     }
 
     // GET /api/games/{id}/spectate — public game state (no auth required)
@@ -516,4 +555,10 @@ public sealed record BotStatusRequest(
     string  Status,
     string? Detail   = null,
     string? Thinking = null
+);
+
+public sealed record ValidateOrdersRequest(
+    string  RaceName,
+    string  Password,
+    string? Orders = null
 );

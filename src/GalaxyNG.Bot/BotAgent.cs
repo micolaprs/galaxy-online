@@ -22,6 +22,7 @@ public sealed class BotAgent(
     private readonly List<DiplomaticMemoryEntry> _myDiplomaticHistory = [];
     private bool _sentInitialGreeting;
     private bool _retired;
+    private string _lastValidationErrors = "";
 
     public async Task RunTurnAsync(int turn, CancellationToken ct = default)
     {
@@ -113,7 +114,9 @@ public sealed class BotAgent(
             if (attempt > 1 && !string.IsNullOrEmpty(orders))
             {
                 messages.Add(ChatMessage.Assistant(orders));
-                messages.Add(ChatMessage.User("Those orders had validation errors. Please fix and rewrite ALL orders."));
+                messages.Add(ChatMessage.User(_lastValidationErrors is { Length: > 0 }
+                    ? $"Those orders had validation errors. Fix them and rewrite ALL orders.\n\n{_lastValidationErrors}"
+                    : "Those orders had validation errors. Fix them and rewrite ALL orders."));
             }
 
             string raw = await CompleteLlmWithTimeoutAsync(messages, $"turn-{turn}-attempt-{attempt}", ct);
@@ -144,11 +147,13 @@ public sealed class BotAgent(
             var validation = await ValidateOrdersAsync(orders, ct);
             if (validation.StartsWith("OK", StringComparison.OrdinalIgnoreCase))
             {
+                _lastValidationErrors = "";
                 logger.LogInformation("✅ [{Race}] Приказы прошли проверку (попытка {Attempt})", config.RaceName, attempt);
                 haveValidOrders = true;
                 break;
             }
 
+            _lastValidationErrors = validation;
             logger.LogWarning("⚠️ [{Race}] Ошибка проверки (попытка {Attempt}): {Error}", config.RaceName, attempt, validation);
             if (attempt == 3)
                 logger.LogError("❌ [{Race}] Отправляю лучший вариант после 3 попыток", config.RaceName);
@@ -237,13 +242,30 @@ public sealed class BotAgent(
 
     private async Task<string> ValidateOrdersAsync(string orders, CancellationToken ct)
     {
-        var url = $"{config.ServerUrl}/api/games/{config.GameId}/forecast/{Uri.EscapeDataString(config.RaceName)}?password={Uri.EscapeDataString(config.Password)}&orders={Uri.EscapeDataString(orders)}";
+        var url  = $"{config.ServerUrl}/api/games/{config.GameId}/validate-orders";
+        var body = new { raceName = config.RaceName, password = config.Password, orders };
         try
         {
-            var response = await Http.GetAsync(url, ct);
-            return response.IsSuccessStatusCode ? "OK" : "Error";
+            using var response = await Http.PostAsJsonAsync(url, body, ct);
+            var json = await response.Content.ReadFromJsonAsync<JsonElement>(cancellationToken: ct);
+            if (json.TryGetProperty("valid", out var validProp) && validProp.GetBoolean())
+                return "OK";
+
+            // Collect error list from response
+            var errorList = new List<string>();
+            if (json.TryGetProperty("errors", out var errArr) && errArr.ValueKind == JsonValueKind.Array)
+                foreach (var e in errArr.EnumerateArray())
+                    if (e.GetString() is { } s) errorList.Add(s);
+
+            return errorList.Count > 0
+                ? "Errors:\n" + string.Join("\n", errorList.Select(e => $"  - {e}"))
+                : "Error: validation failed";
         }
-        catch { return "Error"; }
+        catch (Exception ex)
+        {
+            logger.LogDebug("Validate-orders call failed: {Msg}", ex.Message);
+            return "Error: could not reach server";
+        }
     }
 
     private async Task SubmitOrdersAsync(string orders, bool final, CancellationToken ct)
