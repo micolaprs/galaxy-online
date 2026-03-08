@@ -367,18 +367,51 @@ public sealed class TurnProcessor(
 
     private static void UpdateIdentifiedContacts(Game game)
     {
-        foreach (var planet in game.Planets.Values.Where(p => p.OwnerId is not null))
-        {
-            var ownerId = planet.OwnerId!;
-            var visitors = game.Players.Values
-                .Where(p => p.Id != ownerId)
-                .Where(p => p.Groups.Any(g => !g.InHyperspace && g.At == planet.Name))
-                .Select(p => p.Id)
-                .Distinct(StringComparer.OrdinalIgnoreCase)
-                .ToList();
+        var players = game.Players.Values.ToList();
+        var sensorRange = Math.Max(24, game.GalaxySize * 0.6);
+        var visibilityByPlayer = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase);
 
-            foreach (var visitorId in visitors)
-                game.IdentifiedContactPairs.Add(BuildPairKey(ownerId, visitorId));
+        foreach (var player in players)
+        {
+            var visible = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var anchors = new List<Planet>();
+
+            foreach (var planet in game.PlanetsOwnedBy(player.Id))
+            {
+                visible.Add(planet.Name);
+                anchors.Add(planet);
+            }
+
+            foreach (var group in player.Groups.Where(g => !g.InHyperspace))
+            {
+                visible.Add(group.At);
+                if (game.Planets.TryGetValue(group.At, out var atPlanet))
+                    anchors.Add(atPlanet);
+            }
+
+            foreach (var anchor in anchors)
+            {
+                foreach (var candidate in game.Planets.Values)
+                {
+                    if (anchor.DistanceTo(candidate) <= sensorRange)
+                        visible.Add(candidate.Name);
+                }
+            }
+
+            visibilityByPlayer[player.Id] = visible;
+        }
+
+        for (int i = 0; i < players.Count; i++)
+        {
+            for (int j = i + 1; j < players.Count; j++)
+            {
+                var p1 = players[i];
+                var p2 = players[j];
+                var overlapExists = visibilityByPlayer[p1.Id]
+                    .Overlaps(visibilityByPlayer[p2.Id]);
+                if (overlapExists)
+                    game.IdentifiedContactPairs.Add(BuildPairKey(p1.Id, p2.Id));
+            }
         }
     }
 

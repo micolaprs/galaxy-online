@@ -65,11 +65,33 @@ interface FleetRouteVisual {
   end: THREE.Vector3;
 }
 
+export interface ThreeCombatEvents {
+  turn: number;
+  battlePlanets: string[];
+  bombingPlanets: string[];
+}
+
+interface CombatMarkerVisual {
+  type: 'battle' | 'bombing';
+  primary: THREE.Mesh;
+  secondary: THREE.Mesh;
+  baseScale: number;
+  phase: number;
+}
+
+interface CombatBurstVisual {
+  type: 'battle' | 'bombing';
+  mesh: THREE.Mesh;
+  life: number;
+  ttl: number;
+}
+
 export class GalaxyMapThree {
   private renderer!: THREE.WebGLRenderer;
   private scene!:    THREE.Scene;
   private camera!:   THREE.OrthographicCamera;
   private starField!: THREE.Points;
+  private starFieldBright!: THREE.Points;
 
   // Planet meshes & metadata
   private cleanupMeshes: THREE.Object3D[] = [];
@@ -79,6 +101,9 @@ export class GalaxyMapThree {
   private planets: ThreePlanet[] = [];
   private fleetRoutes: ThreeFleetRoute[] = [];
   private routeVisuals: FleetRouteVisual[] = [];
+  private combatEvents: ThreeCombatEvents = { turn: -1, battlePlanets: [], bombingPlanets: [] };
+  private combatMarkers: CombatMarkerVisual[] = [];
+  private combatBursts: CombatBurstVisual[] = [];
   private showAllRoutes = false;
   private routeFocusPlanet: string | null = null;
   private galaxySize = 0;
@@ -116,12 +141,18 @@ export class GalaxyMapThree {
 
   // ---- Public API ----
 
-  setData(galaxySize: number, planets: ThreePlanet[], fleetRoutes: ThreeFleetRoute[] = []): void {
+  setData(
+    galaxySize: number,
+    planets: ThreePlanet[],
+    fleetRoutes: ThreeFleetRoute[] = [],
+    combatEvents?: ThreeCombatEvents,
+  ): void {
     const isFirstLoad = this.galaxySize === 0;
     const sizeChanged = this.galaxySize !== galaxySize;
     this.galaxySize = galaxySize;
     this.planets    = planets;
     this.fleetRoutes = fleetRoutes;
+    this.combatEvents = combatEvents ?? { turn: -1, battlePlanets: [], bombingPlanets: [] };
     this.buildPlanetMeshes();
     if (isFirstLoad || sizeChanged) this.fitToView();
     this.updateRouteVisibility();
@@ -133,6 +164,35 @@ export class GalaxyMapThree {
     this.routeFocusPlanet = focusPlanet;
     this.updateRouteVisibility();
     this.render();
+  }
+
+  triggerTurnCombatBursts(events: ThreeCombatEvents): void {
+    const spawnBurst = (planetName: string, type: 'battle' | 'bombing') => {
+      const planet = this.planets.find(p => p.name === planetName);
+      if (!planet) return;
+      const radius = this.planetRadius(planet.size);
+      const geo = new THREE.RingGeometry(radius * 1.3, radius * 1.55, 44);
+      const mat = new THREE.MeshBasicMaterial({
+        color: type === 'battle' ? 0xfb7185 : 0xfbbf24,
+        transparent: true,
+        opacity: 0.95,
+        side: THREE.DoubleSide,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+      });
+      const mesh = new THREE.Mesh(geo, mat);
+      mesh.position.set(planet.x, -planet.y, 0.66);
+      this.scene.add(mesh);
+      this.combatBursts.push({
+        type,
+        mesh,
+        life: 0,
+        ttl: type === 'battle' ? 1.35 : 1.05,
+      });
+    };
+
+    for (const planetName of events.battlePlanets) spawnBurst(planetName, 'battle');
+    for (const planetName of events.bombingPlanets) spawnBurst(planetName, 'bombing');
   }
 
   select(name: string | null): void {
@@ -203,23 +263,40 @@ export class GalaxyMapThree {
 
   private buildStarField(): void {
     const positions = new Float32Array(STAR_COUNT * 3);
-    const sizes     = new Float32Array(STAR_COUNT);
     for (let i = 0; i < STAR_COUNT; i++) {
-      positions[i * 3]     = (Math.random() - 0.5) * 800;
-      positions[i * 3 + 1] = (Math.random() - 0.5) * 800;
-      positions[i * 3 + 2] = -5;
-      sizes[i] = Math.random() * 1.5 + 0.3;
+      positions[i * 3] = (Math.random() - 0.5) * 1100;
+      positions[i * 3 + 1] = (Math.random() - 0.5) * 1100;
+      positions[i * 3 + 2] = -6;
     }
     const geo = new THREE.BufferGeometry();
     geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-    geo.setAttribute('size',     new THREE.BufferAttribute(sizes, 1));
 
     const mat = new THREE.PointsMaterial({
       color: 0xffffff, sizeAttenuation: true,
-      size: 0.6, transparent: true, opacity: 0.55,
+      size: 0.85, transparent: true, opacity: 0.7,
     });
     this.starField = new THREE.Points(geo, mat);
     this.scene.add(this.starField);
+
+    const brightPositions = new Float32Array(Math.floor(STAR_COUNT * 0.35) * 3);
+    for (let i = 0; i < brightPositions.length / 3; i++) {
+      brightPositions[i * 3] = (Math.random() - 0.5) * 1300;
+      brightPositions[i * 3 + 1] = (Math.random() - 0.5) * 1300;
+      brightPositions[i * 3 + 2] = -7;
+    }
+    const brightGeo = new THREE.BufferGeometry();
+    brightGeo.setAttribute('position', new THREE.BufferAttribute(brightPositions, 3));
+    const brightMat = new THREE.PointsMaterial({
+      color: 0xdbeafe,
+      sizeAttenuation: true,
+      size: 1.45,
+      transparent: true,
+      opacity: 0.82,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+    });
+    this.starFieldBright = new THREE.Points(brightGeo, brightMat);
+    this.scene.add(this.starFieldBright);
   }
 
   private buildAsteroidFlybys(): void {
@@ -332,7 +409,63 @@ export class GalaxyMapThree {
 
     this.buildAsteroidFlybys();
     this.buildFleetRouteMeshes();
+    this.buildCombatMarkers();
     this.updateSelectionRing();
+  }
+
+  private buildCombatMarkers(): void {
+    this.combatMarkers = [];
+    if (!this.combatEvents) return;
+
+    const markerPlanets = new Map<string, 'battle' | 'bombing'>();
+    for (const planet of this.combatEvents.battlePlanets) markerPlanets.set(planet, 'battle');
+    for (const planet of this.combatEvents.bombingPlanets) markerPlanets.set(planet, 'bombing');
+
+    for (const [planetName, kind] of markerPlanets.entries()) {
+      const planet = this.planets.find(p => p.name === planetName);
+      if (!planet) continue;
+      const radius = this.planetRadius(planet.size);
+      const x = planet.x;
+      const y = -planet.y;
+
+      const primaryGeo = new THREE.RingGeometry(radius * 1.6, radius * 2.05, 52);
+      const primaryMat = new THREE.MeshBasicMaterial({
+        color: kind === 'battle' ? 0xf43f5e : 0xfb923c,
+        transparent: true,
+        opacity: 0.65,
+        side: THREE.DoubleSide,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+      });
+      const primary = new THREE.Mesh(primaryGeo, primaryMat);
+      primary.position.set(x, y, 0.48);
+      this.scene.add(primary);
+      this.cleanupMeshes.push(primary);
+
+      const secondaryGeo = kind === 'battle'
+        ? new THREE.RingGeometry(radius * 2.2, radius * 2.55, 46)
+        : new THREE.CircleGeometry(radius * 1.1, 36);
+      const secondaryMat = new THREE.MeshBasicMaterial({
+        color: kind === 'battle' ? 0xfda4af : 0xfbbf24,
+        transparent: true,
+        opacity: kind === 'battle' ? 0.45 : 0.35,
+        side: THREE.DoubleSide,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+      });
+      const secondary = new THREE.Mesh(secondaryGeo, secondaryMat);
+      secondary.position.set(x, y, 0.51);
+      this.scene.add(secondary);
+      this.cleanupMeshes.push(secondary);
+
+      this.combatMarkers.push({
+        type: kind,
+        primary,
+        secondary,
+        baseScale: 1 + Math.random() * 0.08,
+        phase: Math.random() * Math.PI * 2,
+      });
+    }
   }
 
   private buildFleetRouteMeshes(): void {
@@ -666,10 +799,16 @@ export class GalaxyMapThree {
     }
 
     const starMat = this.starField.material as THREE.PointsMaterial;
-    starMat.opacity = 0.45 + Math.sin(this.clock * 0.7) * 0.1;
+    starMat.opacity = 0.62 + Math.sin(this.clock * 1.5) * 0.16;
+    this.starField.rotation.z += dt * 0.004;
+    const starBrightMat = this.starFieldBright.material as THREE.PointsMaterial;
+    starBrightMat.opacity = 0.74 + Math.sin(this.clock * 2.2 + 0.7) * 0.2;
+    this.starFieldBright.rotation.z -= dt * 0.0025;
 
     this.animateAsteroids(dt);
     this.animateFleetRoutes();
+    this.animateCombatMarkers(dt);
+    this.animateCombatBursts(dt);
     this.animateClickPulses(dt);
 
     if (this.selectedPlanet) this.updateOverlayPosition();
@@ -892,6 +1031,46 @@ export class GalaxyMapThree {
     }
   }
 
+  private animateCombatMarkers(dt: number): void {
+    for (const marker of this.combatMarkers) {
+      const pulse = (Math.sin(this.clock * (marker.type === 'battle' ? 6.4 : 8.2) + marker.phase) + 1) / 2;
+      const flicker = marker.type === 'battle'
+        ? 0.7 + pulse * 0.45
+        : 0.6 + Math.abs(Math.sin(this.clock * 11 + marker.phase * 1.3)) * 0.5;
+
+      marker.primary.rotation.z += dt * (marker.type === 'battle' ? 1.2 : -0.9);
+      marker.secondary.rotation.z -= dt * (marker.type === 'battle' ? 0.8 : 0.5);
+      marker.primary.scale.setScalar(marker.baseScale * (1 + pulse * 0.2));
+      marker.secondary.scale.setScalar(1 + pulse * (marker.type === 'battle' ? 0.28 : 0.18));
+
+      const primaryMat = marker.primary.material as THREE.MeshBasicMaterial;
+      const secondaryMat = marker.secondary.material as THREE.MeshBasicMaterial;
+      primaryMat.opacity = (marker.type === 'battle' ? 0.42 : 0.35) * flicker;
+      secondaryMat.opacity = (marker.type === 'battle' ? 0.32 : 0.28) * flicker;
+    }
+  }
+
+  private animateCombatBursts(dt: number): void {
+    for (let i = this.combatBursts.length - 1; i >= 0; i--) {
+      const burst = this.combatBursts[i]!;
+      burst.life += dt;
+      const progress = burst.life / burst.ttl;
+      const mesh = burst.mesh;
+      const material = mesh.material as THREE.MeshBasicMaterial;
+      const scaleBoost = burst.type === 'battle' ? 2.8 : 2.1;
+      mesh.scale.setScalar(1 + progress * scaleBoost);
+      mesh.rotation.z += dt * (burst.type === 'battle' ? 2.2 : 1.6);
+      material.opacity = (1 - progress) * (burst.type === 'battle' ? 0.95 : 0.8);
+
+      if (progress >= 1) {
+        this.scene.remove(mesh);
+        mesh.geometry.dispose();
+        material.dispose();
+        this.combatBursts.splice(i, 1);
+      }
+    }
+  }
+
   private disposeSceneObjects(): void {
     for (const object of this.cleanupMeshes) {
       this.scene.remove(object);
@@ -918,6 +1097,13 @@ export class GalaxyMapThree {
     this.cleanupMeshes = [];
     this.planetVisuals = [];
     this.routeVisuals = [];
+    this.combatMarkers = [];
+    for (const burst of this.combatBursts) {
+      this.scene.remove(burst.mesh);
+      burst.mesh.geometry.dispose();
+      (burst.mesh.material as THREE.Material).dispose();
+    }
+    this.combatBursts = [];
     this.clickPulses = [];
     this.disposeAsteroidFlybys();
   }

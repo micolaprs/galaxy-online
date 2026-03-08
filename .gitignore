@@ -37,3 +37,4 @@ appsettings.*.json
 # Test results
 TestResults/
 coverage/
+CLAUDE.md

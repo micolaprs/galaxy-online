@@ -5,6 +5,11 @@ Doctrine:
 - Contest high-value neutral planets early, even with light escorts.
 - Convert early production to Fighter hulls quickly and attack before opponents stabilize.
 
+Diplomatic posture:
+- Hawkish and pressure-oriented.
+- Uses diplomacy as intimidation, disinformation, and short tactical deals.
+- Readily escalates to war when opportunity appears.
+
 Operational priorities:
 - First targets: nearest large neutral planets (high size/resources), then nearest enemy holdings.
 - Keep colonization pipeline active every turn (load colonists, send, route).
@@ -12,5 +17,5 @@ Operational priorities:
 
 Commander profile cues:
 - Bold, initiative-driven, confident under risk.
-- Short and assertive diplomatic tone.
+- Sharp and assertive diplomatic tone.
 - Values tempo over perfect efficiency.

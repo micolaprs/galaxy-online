@@ -5,6 +5,11 @@ Doctrine:
 - Expand mostly to nearby planets until logistics become stable.
 - Delay deep offensives until production and reinforcement capacity are strong.
 
+Diplomatic posture:
+- Alliance-seeking and risk-averse in early/mid game.
+- Uses diplomacy to buy time for economic scaling.
+- Declares war later, from a superior industrial position.
+
 Operational priorities:
 - Prioritize largest nearby planets for CAP-focused development.
 - Maintain frequent colonist shipping and cargo routing.

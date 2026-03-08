@@ -26,6 +26,7 @@ public sealed class BotAgent(
     private bool _sentInitialGreeting;
     private bool _retired;
     private string _lastValidationErrors = "";
+    private List<StatusRow> _lastStatusRows = [];
     private TurnToolContext? _turnToolContext;
     private McpClient? _mcpClient;
     private readonly SemaphoreSlim _mcpInitLock = new(1, 1);
@@ -87,6 +88,7 @@ public sealed class BotAgent(
         int reportLines = report.Split('\n').Length;
         logger.LogInformation("📋 [{Race}] Отчёт получен ({Lines} строк)", config.RaceName, reportLines);
         await RefreshMyDiplomaticHistoryAsync(ct);
+        _lastStatusRows = ParseStatusRowsFromReport(report);
         _turnToolContext = BuildTurnToolContext(turn, report);
 
         var checkpoint = await EvaluateCheckpointDecisionAsync(turn, report, ct);
@@ -1081,7 +1083,16 @@ public sealed class BotAgent(
     private Task<DiplomacyContext?> GetDiplomacyContextAsync(CancellationToken ct)
     {
         _ = ct;
-        return Task.FromResult<DiplomacyContext?>(null);
+        var contacts = _lastStatusRows
+            .Where(r => !r.IsEliminated && !r.Name.Equals(config.RaceName, StringComparison.OrdinalIgnoreCase))
+            .Select(r => r.Name)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        if (contacts.Count == 0)
+            return Task.FromResult<DiplomacyContext?>(null);
+
+        return Task.FromResult<DiplomacyContext?>(new DiplomacyContext(contacts));
     }
 
     private async Task EnsureCommanderProfileAsync(CancellationToken ct)

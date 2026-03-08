@@ -4,7 +4,12 @@ import type {
   SpectateData, SpectatePlayer, SpectateBattle, SpectateBombing,
   BotStatusEvent, TechLevels, SpectateChatMessage, SpectatePrivateChat, FinalGameReport,
 } from '../types/api.js';
-import { GalaxyMapThree, type ThreeFleetRoute, type ThreePlanet } from './GalaxyMapThree.js';
+import {
+  GalaxyMapThree,
+  type ThreeCombatEvents,
+  type ThreeFleetRoute,
+  type ThreePlanet,
+} from './GalaxyMapThree.js';
 import { PlanetPanel } from './PlanetPanel.js';
 import { PlayerHistoryPanel } from './PlayerHistoryPanel.js';
 import { GalaxySummaryPanel } from './GalaxySummaryPanel.js';
@@ -42,7 +47,7 @@ export class WatchView {
   private botStatuses = new Map<string, BotStatusEvent>();
   private hub: HubConnection | null = null;
   private lastData: SpectateData | null = null;
-  private activeRightTab: 'players' | 'summary' = 'players';
+  private activeRightTab: 'players' | 'summary' | 'combat' = 'players';
   private diplomacyCollapsed = false;
   private showAllRoutes = true;
   private routeFocusPlanet: string | null = null;
@@ -130,11 +135,15 @@ export class WatchView {
           <div class="wv-right-col">
             <div class="wv-right-tabs">
               <button class="wv-rtab active" data-tab="players">Игроки</button>
+              <button class="wv-rtab" data-tab="combat">Сражения</button>
               <button class="wv-rtab" data-tab="summary">Галактика</button>
             </div>
             <div class="wv-right-body">
               <div class="wv-tab-content active" id="tab-players">
                 <!-- Player list -->
+              </div>
+              <div class="wv-tab-content" id="tab-combat">
+                <!-- Combat intel -->
               </div>
               <div class="wv-tab-content" id="tab-summary">
                 <!-- Galaxy summary -->
@@ -160,7 +169,7 @@ export class WatchView {
         this.el.querySelectorAll('.wv-rtab').forEach(b => b.classList.remove('active'));
         this.el.querySelectorAll('.wv-tab-content').forEach(c => c.classList.remove('active'));
         btn.classList.add('active');
-        const tab = btn.dataset['tab'] as 'players' | 'summary';
+        const tab = btn.dataset['tab'] as 'players' | 'summary' | 'combat';
         this.activeRightTab = tab;
         this.el.querySelector(`#tab-${tab}`)!.classList.add('active');
       });
@@ -233,8 +242,14 @@ export class WatchView {
       const turnChanged = data.turn !== this.currentTurn;
       if (turnChanged) {
         this.recordTurnEvent(data);
+        this.map.triggerTurnCombatBursts({
+          turn: data.turn,
+          battlePlanets: data.battles.map(b => b.planetName),
+          bombingPlanets: data.bombings.map(b => b.planetName),
+        });
         this.currentTurn = data.turn;
       }
+      this.renderCombatIntel();
 
       // Keep galaxy summary panel in sync on every refresh,
       // so delayed summary generation appears without waiting for next turn.
@@ -317,7 +332,12 @@ export class WatchView {
       })
       .filter((route): route is ThreeFleetRoute => route !== null);
 
-    this.map.setData(data.galaxySize, planets, fleetRoutes);
+    const combatEvents: ThreeCombatEvents = {
+      turn: data.turn,
+      battlePlanets: data.battles.map(b => b.planetName),
+      bombingPlanets: data.bombings.map(b => b.planetName),
+    };
+    this.map.setData(data.galaxySize, planets, fleetRoutes, combatEvents);
     this.applyRouteDisplayMode();
   }
 
@@ -330,6 +350,58 @@ export class WatchView {
       bombings: [...data.bombings],
     });
     if (this.turnLog.length > 20) this.turnLog.pop();
+  }
+
+  private renderCombatIntel(): void {
+    const tab = this.el.querySelector<HTMLElement>('#tab-combat');
+    if (!tab) return;
+
+    if (this.turnLog.length === 0) {
+      tab.innerHTML = '<div class="wv-combat-empty">Пока нет завершённых ходов с боевыми событиями.</div>';
+      return;
+    }
+
+    const entries = this.turnLog
+      .filter(entry => entry.battles.length > 0 || entry.bombings.length > 0)
+      .slice(0, 20);
+
+    if (entries.length === 0) {
+      tab.innerHTML = '<div class="wv-combat-empty">Сражений и бомбардировок пока не зафиксировано.</div>';
+      return;
+    }
+
+    tab.innerHTML = entries.map(entry => {
+      const battles = entry.battles.map(b => {
+        const participants = b.participants.length > 0 ? b.participants.join(' vs ') : 'неизвестные участники';
+        return `
+          <div class="wv-combat-event battle">
+            <div class="wv-combat-kind">Орбитальный бой</div>
+            <div class="wv-combat-main">${esc(b.planetName)}</div>
+            <div class="wv-combat-sub">${esc(participants)}</div>
+            <div class="wv-combat-sub winner">Победитель: ${esc(b.winner)}</div>
+          </div>
+        `;
+      }).join('');
+
+      const bombings = entry.bombings.map(b => `
+        <div class="wv-combat-event bombing">
+          <div class="wv-combat-kind">Бомбардировка</div>
+          <div class="wv-combat-main">${esc(b.planetName)}</div>
+          <div class="wv-combat-sub">Атакующий: ${esc(b.attackerRace)}</div>
+          <div class="wv-combat-sub">${esc(b.previousOwner ? `Владелец до удара: ${b.previousOwner}` : 'Ранее нейтральная цель')}</div>
+        </div>
+      `).join('');
+
+      return `
+        <section class="wv-combat-turn">
+          <div class="wv-combat-turn-head">
+            <span class="wv-combat-turn-no">Ход ${entry.turn}</span>
+            <span class="wv-combat-turn-time">${esc(new Date(entry.at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }))}</span>
+          </div>
+          <div class="wv-combat-events">${battles}${bombings}</div>
+        </section>
+      `;
+    }).join('');
   }
 
   private async runTurn(): Promise<void> {

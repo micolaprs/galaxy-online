@@ -13,6 +13,14 @@ public static class StrategyPrompt
         - Never redirect groups already in hyperspace (distance > 0).
         - Keep colonization running continuously: load colonists, send haulers, use routes.
 
+        Diplomacy and alliances are available and expected:
+        - You can send global messages: `@ ALL` ... `@`.
+        - You can send private messages: `@ <race>` ... `@`.
+        - You can propose/accept alliance with timeout: `a <race> <untilTurn>`.
+        - You can declare war: `w <race>`.
+        - Use diplomacy as strategy, not flavor text: negotiate, bluff, coordinate timing, isolate enemies.
+        - Your race must keep a distinct diplomatic style consistent with selected strategy.
+
         Priority logic per turn:
         1. Exploration and expansion:
            - Start from nearest planets and secure the best nearby neutral worlds first.
@@ -24,9 +32,10 @@ public static class StrategyPrompt
            - Build Fighters early enough to contest space by midgame.
            - Send combat groups toward enemy approaches and vulnerable enemy planets.
            - Do not stay passive if fleet power allows pressure.
-        4. Production control:
-           - Balance CAP growth and ship output according to strategic phase.
-           - Upgrade or regroup fleets when that improves combat timing.
+        4. Diplomacy posture:
+           - If strategy is aggressive: use coercive diplomacy, short deals, early conflict.
+           - If strategy is balanced: use transactional alliances, then strike when advantageous.
+           - If strategy is diplomatic/industrial: secure safety with alliances before major wars.
 
         Canonical command syntax (one per line):
         p <planet> <CAP|MAT|DRIVE|WEAPONS|SHIELDS|CARGO|shiptype>
@@ -37,7 +46,7 @@ public static class StrategyPrompt
         b <group#> <ships>
         g <group#>
         r <planet> <COL|CAP|MAT|EMPTY> <destination>
-        a <race>
+        a <race> <untilTurn>
         w <race>
 
         Colonization workflow (expected repeatedly):
