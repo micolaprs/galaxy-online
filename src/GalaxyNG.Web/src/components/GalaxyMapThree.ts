@@ -398,7 +398,10 @@ export class GalaxyMapThree {
       this.scene.add(mesh);
       this.cleanupMeshes.push(mesh);
 
-      const haloGeo = new THREE.RingGeometry(radius * 1.28, radius * 1.6, 40);
+      // Halo — tight, just outside the sphere
+      const haloInner = radius * 1.18;
+      const haloOuter = radius * 1.40;
+      const haloGeo = new THREE.RingGeometry(haloInner, haloOuter, 40);
       const haloMat = new THREE.MeshBasicMaterial({
         color: this.hexColor(p.color),
         transparent: true,
@@ -422,39 +425,36 @@ export class GalaxyMapThree {
 
       // Ship dot
       if (p.hasShips) {
-        const dotGeo = new THREE.SphereGeometry(radius * 0.35, 8, 6);
+        const dotGeo = new THREE.SphereGeometry(radius * 0.32, 8, 6);
         const dotMat = new THREE.MeshBasicMaterial({ color: 0x38bdf8 });
         const dot    = new THREE.Mesh(dotGeo, dotMat);
-        dot.position.set(p.x + radius * 1.2, -(p.y - radius * 1.2), 0.5);
+        dot.position.set(p.x + radius * 1.1, -(p.y - radius * 1.1), 0.5);
         this.scene.add(dot);
         this.cleanupMeshes.push(dot);
       }
 
-      // Production orbit rings for owned planets
+      // Production orbit ring — one subtle ring, tightly capped
       if (p.ownerId) {
         const devRatio = p.size > 0 ? Math.min(1, (p.population ?? 0) / p.size) : 0.3;
-        const ringOpacity = 0.12 + devRatio * 0.22;
-        for (let ri = 0; ri < 2; ri++) {
-          const ringR = radius * (ri === 0 ? 2.0 : 2.6);
-          const rGeo = new THREE.RingGeometry(ringR, ringR + 0.14, 30);
-          const rMat = new THREE.MeshBasicMaterial({
-            color: this.hexColor(p.color),
-            transparent: true,
-            opacity: ringOpacity * (ri === 0 ? 1 : 0.6),
-            side: THREE.DoubleSide,
-            blending: THREE.AdditiveBlending,
-            depthWrite: false,
-          });
-          const rMesh = new THREE.Mesh(rGeo, rMat);
-          rMesh.position.set(p.x, -p.y, 0.05 + ri * 0.02);
-          this.scene.add(rMesh);
-          this.cleanupMeshes.push(rMesh);
-          this.productionRings.push({
-            mesh: rMesh,
-            orbitSpeed: (ri === 0 ? 0.18 : -0.28) * (0.7 + Math.random() * 0.6),
-            orbitPhase: Math.random() * Math.PI * 2,
-          });
-        }
+        const ringR = Math.min(radius * 1.65, 3.2); // cap absolute size
+        const rGeo = new THREE.RingGeometry(ringR, ringR + 0.12, 32);
+        const rMat = new THREE.MeshBasicMaterial({
+          color: this.hexColor(p.color),
+          transparent: true,
+          opacity: 0.10 + devRatio * 0.14,
+          side: THREE.DoubleSide,
+          blending: THREE.AdditiveBlending,
+          depthWrite: false,
+        });
+        const rMesh = new THREE.Mesh(rGeo, rMat);
+        rMesh.position.set(p.x, -p.y, 0.05);
+        this.scene.add(rMesh);
+        this.cleanupMeshes.push(rMesh);
+        this.productionRings.push({
+          mesh: rMesh,
+          orbitSpeed: 0.15 * (0.8 + Math.random() * 0.4) * (Math.random() < 0.5 ? 1 : -1),
+          orbitPhase: Math.random() * Math.PI * 2,
+        });
       }
     }
 
@@ -479,7 +479,7 @@ export class GalaxyMapThree {
       const x = planet.x;
       const y = -planet.y;
 
-      const primaryGeo = new THREE.RingGeometry(radius * 1.6, radius * 2.05, 52);
+      const primaryGeo = new THREE.RingGeometry(radius * 1.45, radius * 1.75, 52);
       const primaryMat = new THREE.MeshBasicMaterial({
         color: kind === 'battle' ? 0xf43f5e : 0xfb923c,
         transparent: true,
@@ -494,8 +494,8 @@ export class GalaxyMapThree {
       this.cleanupMeshes.push(primary);
 
       const secondaryGeo = kind === 'battle'
-        ? new THREE.RingGeometry(radius * 2.2, radius * 2.55, 46)
-        : new THREE.CircleGeometry(radius * 1.1, 36);
+        ? new THREE.RingGeometry(radius * 1.9, radius * 2.15, 46)
+        : new THREE.CircleGeometry(radius * 0.9, 36);
       const secondaryMat = new THREE.MeshBasicMaterial({
         color: kind === 'battle' ? 0xfda4af : 0xfbbf24,
         transparent: true,
@@ -651,7 +651,8 @@ export class GalaxyMapThree {
   }
 
   private planetRadius(size: number): number {
-    return Math.max(0.8, Math.min(3.5, (size / 1000) * 5));
+    // Capped smaller so planets don't visually crowd each other
+    return Math.max(0.55, Math.min(2.2, (size / 1000) * 3.8));
   }
 
   private hexColor(css: string): number {
