@@ -373,20 +373,24 @@ export class WatchView {
     tab.innerHTML = entries.map(entry => {
       const battles = entry.battles.map(b => {
         const participants = b.participants.length > 0 ? b.participants.join(' vs ') : 'неизвестные участники';
+        const participantBadges = b.participants.map(p => {
+          const color = [...this.playerColorMap.entries()].find(([, v]) => v && this.lastData?.players.find(pl => pl.name === p && this.playerColorMap.get(pl.id) === v))?.[1] ?? '#94a3b8';
+          return `<span class="wv-combat-badge" style="border-color:${esc(color)}">${esc(p)}</span>`;
+        }).join('');
         return `
-          <div class="wv-combat-event battle">
-            <div class="wv-combat-kind">Орбитальный бой</div>
-            <div class="wv-combat-main">${esc(b.planetName)}</div>
-            <div class="wv-combat-sub">${esc(participants)}</div>
-            <div class="wv-combat-sub winner">Победитель: ${esc(b.winner)}</div>
+          <div class="wv-combat-event battle wv-combat-clickable" data-planet="${esc(b.planetName)}">
+            <div class="wv-combat-kind">⚔ Орбитальный бой</div>
+            <div class="wv-combat-main">${esc(b.planetName)} <span class="wv-combat-nav-hint">→ на карте</span></div>
+            <div class="wv-combat-badges">${participantBadges || esc(participants)}</div>
+            <div class="wv-combat-sub winner">🏆 Победитель: ${esc(b.winner)}</div>
           </div>
         `;
       }).join('');
 
       const bombings = entry.bombings.map(b => `
-        <div class="wv-combat-event bombing">
-          <div class="wv-combat-kind">Бомбардировка</div>
-          <div class="wv-combat-main">${esc(b.planetName)}</div>
+        <div class="wv-combat-event bombing wv-combat-clickable" data-planet="${esc(b.planetName)}">
+          <div class="wv-combat-kind">💥 Бомбардировка</div>
+          <div class="wv-combat-main">${esc(b.planetName)} <span class="wv-combat-nav-hint">→ на карте</span></div>
           <div class="wv-combat-sub">Атакующий: ${esc(b.attackerRace)}</div>
           <div class="wv-combat-sub">${esc(b.previousOwner ? `Владелец до удара: ${b.previousOwner}` : 'Ранее нейтральная цель')}</div>
         </div>
@@ -402,6 +406,17 @@ export class WatchView {
         </section>
       `;
     }).join('');
+
+    // Add click handlers
+    tab.querySelectorAll<HTMLElement>('.wv-combat-clickable').forEach(el => {
+      el.addEventListener('click', () => {
+        const planet = el.dataset['planet'];
+        if (planet) {
+          this.navigateToPlanet(planet);
+          // Switch to map view by switching right tab away if needed
+        }
+      });
+    });
   }
 
   private async runTurn(): Promise<void> {
@@ -423,6 +438,13 @@ export class WatchView {
 
     chat.classList.toggle('collapsed', this.diplomacyCollapsed);
     btn.textContent = this.diplomacyCollapsed ? 'Дипломатия ▸' : 'Дипломатия ▾';
+  }
+
+  private navigateToPlanet(name: string): void {
+    this.map.panToAndSelect(name);
+    this.routeFocusPlanet = name;
+    this.applyRouteDisplayMode();
+    this.planetPanel.show(name);
   }
 
   private renderDiplomacy(data: SpectateData): void {

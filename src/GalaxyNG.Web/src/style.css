@@ -582,6 +582,41 @@ input:focus { outline: none; border-color: var(--accent); }
 .wv-combat-sub.winner {
   color: #fca5a5;
 }
+.wv-combat-clickable {
+  cursor: pointer;
+  transition: transform 0.12s ease, box-shadow 0.12s ease, border-color 0.12s ease;
+}
+.wv-combat-clickable:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 14px rgba(0,0,0,0.35);
+}
+.wv-combat-event.battle.wv-combat-clickable:hover {
+  border-color: rgba(248, 113, 113, 0.6);
+}
+.wv-combat-event.bombing.wv-combat-clickable:hover {
+  border-color: rgba(251, 146, 60, 0.65);
+}
+.wv-combat-nav-hint {
+  font-size: 9px;
+  color: #38bdf8;
+  opacity: 0.7;
+  margin-left: 4px;
+  font-weight: 400;
+}
+.wv-combat-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 3px;
+}
+.wv-combat-badge {
+  font-size: 10px;
+  color: var(--text);
+  border: 1px solid #94a3b8;
+  border-radius: 4px;
+  padding: 1px 5px;
+  background: rgba(255,255,255,0.05);
+}
 
 .wv-final-overlay {
   position: absolute;
