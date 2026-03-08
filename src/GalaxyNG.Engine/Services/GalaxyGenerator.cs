@@ -7,10 +7,18 @@ public sealed class GalaxyGenerator(Random? rng = null)
 {
     private readonly Random _rng = rng ?? Random.Shared;
 
-    public static GalaxyGeneratorOptions DefaultOptions(int playerCount)
+    // Fighter reference: drive=2, attacks=2, weapons=2, shields=1, cargo=0
+    //   mass = 2+2+1+max(0,2-1)×1 = 6; speed = 20×1×2/6 ≈ 6.667 u/turn
+    // gs = maxTurns × FighterSpeed × sqrt(playerCount / BreakEvenPlayers)
+    // At BreakEvenPlayers (5) the galaxy is exactly crossable in maxTurns:
+    //   3p, 60t→310  4p, 60t→358  5p, 60t→400  6p, 60t→438
+    private const double FighterSpeed     = 20.0 * 2 / 6;  // ~6.667 u/turn
+    private const int    BreakEvenPlayers = 5;
+
+    public static GalaxyGeneratorOptions DefaultOptions(int playerCount, int maxTurns = 60)
     {
-        double gs = Math.Round(100.0 * (1.0 + Math.Sqrt(Math.Max(1, playerCount))));
-        // 1p→200, 2p→241, 3p→273, 4p→300, 9p→400
+        double gs = Math.Round(maxTurns * FighterSpeed * Math.Sqrt(Math.Max(1, playerCount) / (double)BreakEvenPlayers));
+        gs = Math.Max(gs, 80);  // absolute minimum
         return new()
         {
             GalaxySize    = gs,

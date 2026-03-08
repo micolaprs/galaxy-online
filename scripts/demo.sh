@@ -22,7 +22,7 @@ DO_CLEAN=false  # по умолчанию: возобновляем послед
 FORCE_NEW=false # --new: удалить старые и создать новую
 LLM_PROVIDER="${GALAXYNG_BOT_LLM_PROVIDER:-lmstudio}"
 PROVIDER_AUTH_DIR="${GALAXYNG_OPENAI_CODEX_AUTH_DIR:-}"
-MAX_TURNS="${GALAXYNG_DEMO_MAX_TURNS:-}"  # empty = auto (server computes from galaxy size)
+MAX_TURNS="${GALAXYNG_DEMO_MAX_TURNS:-60}"  # drives galaxy size (more turns = bigger galaxy)
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -365,16 +365,10 @@ if [[ -z "$GAME_ID" ]]; then
     SIZE_JSON=""
   fi
 
-  if [[ -n "$MAX_TURNS" ]]; then
-    TURNS_JSON=",\"maxTurns\":$MAX_TURNS"
-  else
-    TURNS_JSON=""  # server auto-computes from galaxy size
-  fi
-
   RESPONSE=$(curl -sf -X POST "$SERVER_URL/api/games" \
     -H "Content-Type: application/json" \
-    -d "$(printf '{"name":"%s","players":%s,"autoRun":true%s%s}' \
-      "$GAME_NAME" "$PLAYERS_JSON" "$TURNS_JSON" "$SIZE_JSON")")
+    -d "$(printf '{"name":"%s","players":%s,"autoRun":true,"maxTurns":%d%s}' \
+      "$GAME_NAME" "$PLAYERS_JSON" "$MAX_TURNS" "$SIZE_JSON")")
 
   GAME_ID=$(echo "$RESPONSE" | python3 -c "import sys,json; print(json.load(sys.stdin)['gameId'])")
   ok "Игра создана: $GAME_ID"

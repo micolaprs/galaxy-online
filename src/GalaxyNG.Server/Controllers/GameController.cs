@@ -16,26 +16,18 @@ public sealed class GameController(GameService svc) : ControllerBase
         if (req.Players is not { Count: >= 1 })
             return BadRequest("At least one player required.");
 
-        var opts = req.GalaxySize.HasValue ? new GalaxyGeneratorOptions
-        {
-            GalaxySize   = req.GalaxySize.Value,
-            PlayerCount  = req.Players.Count,
-            MinDist      = req.MinDist ?? GalaxyGenerator.DefaultOptions(req.Players.Count).MinDist,
-            StuffPlanets = req.StuffPlanets ?? 5,
-        } : null;
+        // maxTurns is the primary input; galaxy size is derived from it.
+        int maxTurns = req.MaxTurns is > 0 ? req.MaxTurns.Value : 60;
 
-        // Auto-compute maxTurns from galaxy size when not specified:
-        // maxTurns = galaxySize * 0.30 (e.g. 200→60, 300→90, 400→120)
-        int maxTurns;
-        if (req.MaxTurns is > 0)
-        {
-            maxTurns = req.MaxTurns.Value;
-        }
-        else
-        {
-            var effectiveOpts = opts ?? GalaxyGenerator.DefaultOptions(req.Players.Count);
-            maxTurns = (int)Math.Round(effectiveOpts.GalaxySize * 0.30);
-        }
+        GalaxyGeneratorOptions? opts = req.GalaxySize.HasValue
+            ? new GalaxyGeneratorOptions
+            {
+                GalaxySize   = req.GalaxySize.Value,
+                PlayerCount  = req.Players.Count,
+                MinDist      = req.MinDist ?? GalaxyGenerator.DefaultOptions(req.Players.Count, maxTurns).MinDist,
+                StuffPlanets = req.StuffPlanets ?? 5,
+            }
+            : GalaxyGenerator.DefaultOptions(req.Players.Count, maxTurns);
 
         var players = req.Players.Select(p => (p.Name, p.Password, p.IsBot)).ToList();
         var game = await svc.CreateGameAsync(req.Name, players, opts, req.AutoRun, maxTurns, ct);
