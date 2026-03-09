@@ -63,7 +63,7 @@ export GALAXYNG_OPENAI_CODEX_AUTH_DIR=~/.codex
 | `--provider NAME`         | LLM provider: `lmstudio` или `openai/codex`      | `lmstudio`   |
 | `--auth-dir PATH`         | Путь к auth-файлам (для `openai/codex`)          | из env       |
 
-Сервер поднимается на **http://localhost:5055**.
+Сервер по умолчанию доступен локально на **http://localhost:5055**.
 
 > По умолчанию используется `lmstudio`. Если выбран внешний провайдер и он недоступен (например, нет `auth.json`), demo-скрипт автоматически вернётся к `lmstudio`.
 
@@ -115,7 +115,31 @@ npm run build     # output → src/GalaxyNG.Server/wwwroot/
 
 ```bash
 cd src/GalaxyNG.Server
-dotnet run --no-launch-profile --urls "http://localhost:5055"
+dotnet run --no-launch-profile --urls "http://0.0.0.0:5055"
+```
+
+Для доступа с других устройств в LAN открывайте сервер по IP машины, например:
+
+```text
+http://192.168.1.48:5055
+```
+
+Проверка биндинга:
+
+```bash
+netstat -an | grep 5055
+```
+
+Ожидаемый результат:
+
+```text
+0.0.0.0:5055 LISTEN
+```
+
+или:
+
+```text
+*:5055 LISTEN
 ```
 
 ### 4. Открыть игру в браузере
@@ -123,6 +147,8 @@ dotnet run --no-launch-profile --urls "http://localhost:5055"
 ```
 http://localhost:5055
 ```
+
+С другого устройства используйте IP хоста, например `http://192.168.1.48:5055`.
 
 Главная страница показывает список активных игр. Нажмите **New Game** → ввести название, имя расы, пароль → **Create Game**.
 Появится ссылка вида `http://localhost:5055/?game=ABCD1234` — передайте её другим игрокам.

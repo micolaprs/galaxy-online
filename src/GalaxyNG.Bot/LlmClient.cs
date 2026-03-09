@@ -112,7 +112,12 @@ public sealed class LlmClient(HttpClient http, LlmConfig config, ILogger<LlmClie
             };
 
             using var response = await http.PostAsJsonAsync("chat/completions", request, JsonOpts, ct);
-            response.EnsureSuccessStatusCode();
+            if (!response.IsSuccessStatusCode)
+            {
+                var errorBody = await response.Content.ReadAsStringAsync(ct);
+                throw new HttpRequestException(
+                    $"LM Studio chat/completions error {(int)response.StatusCode} ({response.ReasonPhrase}). Body: {errorBody}");
+            }
 
             var result = await response.Content.ReadFromJsonAsync<ChatCompletionResponseWithTools>(JsonOpts, ct);
             if (result?.Choices is not { Count: > 0 })

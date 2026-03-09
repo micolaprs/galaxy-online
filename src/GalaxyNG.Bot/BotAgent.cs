@@ -17,7 +17,9 @@ public sealed class BotAgent(
     ILoggerFactory loggerFactory,
     ILogger<BotAgent> logger)
 {
-    private readonly TimeSpan _llmTimeout = TimeSpan.FromSeconds(Math.Clamp(config.LlmTimeoutSeconds, 30, 300));
+    private readonly TimeSpan _llmTimeout = TimeSpan.FromSeconds(Math.Clamp(config.LlmTimeoutSeconds, 30, 600));
+    // Named OS semaphore shared across all bot processes on the same machine (for lmstudio serialization)
+    private static readonly System.Threading.Semaphore _llmOsSemaphore = new(1, 1, "GalaxyNG_LlmQueue");
     private readonly ILoggerFactory _loggerFactory = loggerFactory;
     private readonly BotStrategy _strategy = BotStrategyCatalog.PickForBot(config.GameId, config.RaceName, config.StrategyId);
     private string SystemPrompt => StrategyPrompt.BuildSystemPrompt(_strategy);
@@ -287,13 +289,6 @@ public sealed class BotAgent(
                 {
                     logger.LogInformation("🔔 [{Race}] Новый ход: {Turn}", config.RaceName, state.Turn);
                     lastTurn = state.Turn;
-                    if (config.TurnStartDelaySeconds > 0)
-                    {
-                        var slotMsg = $"очередь LLM: жду {config.TurnStartDelaySeconds}с";
-                        logger.LogInformation("⏳ [{Race}] {Msg}", config.RaceName, slotMsg);
-                        await PostBotStatusAsync("waiting", slotMsg, ct);
-                        await Task.Delay(TimeSpan.FromSeconds(config.TurnStartDelaySeconds), ct);
-                    }
                     await RunTurnAsync(state.Turn, ct);
                 }
                 else if (!state.MySubmitted)
@@ -2115,65 +2110,27 @@ public sealed class BotAgent(
         {
             if (config.Llm.Serialized)
             {
-                await ReleaseLlmSlotAsync(ct);
+                _llmOsSemaphore.Release();
             }
         }
     }
 
     private async Task AcquireLlmSlotAsync(string context, CancellationToken ct)
     {
-        var leaseDuration = (int)_llmTimeout.TotalSeconds + 60;
-        var waitLogged = false;
-        var lastLogTime = DateTime.UtcNow;
-        while (true)
+        if (_llmOsSemaphore.WaitOne(0))
+        {
+            return; // got it immediately
+        }
+
+        logger.LogInformation("⏳ [{Race}] очередь LLM: ожидаю слот ({Context})…", config.RaceName, context);
+        await PostBotStatusAsync("waiting", "очередь LLM", ct);
+
+        while (!_llmOsSemaphore.WaitOne(500))
         {
             ct.ThrowIfCancellationRequested();
-            var result = await CallMcpToolAsync("try_acquire_llm_slot", new Dictionary<string, object?>
-            {
-                ["gameId"] = config.GameId,
-                ["raceName"] = config.RaceName,
-                ["password"] = config.Password,
-                ["leaseDurationSeconds"] = leaseDuration,
-            }, ct);
-            if (result == "acquired")
-            {
-                if (waitLogged)
-                {
-                    logger.LogInformation("✅ [{Race}] LLM слот получен для {Context}", config.RaceName, context);
-                }
+        }
 
-                return;
-            }
-            if (!waitLogged)
-            {
-                logger.LogInformation("⏳ [{Race}] очередь LLM: ожидаю слот для {Context}", config.RaceName, context);
-                await PostBotStatusAsync("waiting", "очередь LLM: ожидаю слот", ct);
-                waitLogged = true;
-            }
-            else if ((DateTime.UtcNow - lastLogTime).TotalSeconds >= 30)
-            {
-                logger.LogInformation("⏳ [{Race}] ещё жду LLM слот для {Context}…", config.RaceName, context);
-                lastLogTime = DateTime.UtcNow;
-            }
-            await Task.Delay(TimeSpan.FromSeconds(5), ct);
-        }
-    }
-
-    private async Task ReleaseLlmSlotAsync(CancellationToken ct)
-    {
-        try
-        {
-            await CallMcpToolAsync("release_llm_slot", new Dictionary<string, object?>
-            {
-                ["gameId"] = config.GameId,
-                ["raceName"] = config.RaceName,
-                ["password"] = config.Password,
-            }, ct);
-        }
-        catch (Exception ex)
-        {
-            logger.LogDebug("[{Race}] Не удалось освободить LLM слот: {Msg}", config.RaceName, ex.Message);
-        }
+        logger.LogInformation("✅ [{Race}] LLM слот получен ({Context})", config.RaceName, context);
     }
 
     private sealed record PlanetSnapshot(

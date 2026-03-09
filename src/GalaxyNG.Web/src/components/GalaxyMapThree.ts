@@ -436,7 +436,7 @@ export class GalaxyMapThree {
       // Production orbit ring — one subtle ring, tightly capped
       if (p.ownerId) {
         const devRatio = p.size > 0 ? Math.min(1, (p.population ?? 0) / p.size) : 0.3;
-        const ringR = Math.min(radius * 1.65, 3.2); // cap absolute size
+        const ringR = Math.min(radius * 1.5, 2.2); // cap absolute size
         const rGeo = new THREE.RingGeometry(ringR, ringR + 0.12, 32);
         const rMat = new THREE.MeshBasicMaterial({
           color: this.hexColor(p.color),
@@ -534,9 +534,11 @@ export class GalaxyMapThree {
         color: this.hexColor(route.color),
         transparent: true,
         opacity: 0.12,
+        depthTest: false,
       });
       const traveledLine = new THREE.Line(traveledGeometry, traveledMaterial);
       traveledLine.userData['fleetRoute'] = route;
+      traveledLine.renderOrder = 10;
       this.scene.add(traveledLine);
       this.cleanupMeshes.push(traveledLine);
 
@@ -551,9 +553,11 @@ export class GalaxyMapThree {
         opacity: 0.88,
         blending: THREE.AdditiveBlending,
         depthWrite: false,
+        depthTest: false,
       });
       const laneDashes = new THREE.LineSegments(dashGeo, dashMat);
       laneDashes.userData['fleetRoute'] = route;
+      laneDashes.renderOrder = 11;
       this.scene.add(laneDashes);
       this.cleanupMeshes.push(laneDashes);
 
@@ -651,8 +655,7 @@ export class GalaxyMapThree {
   }
 
   private planetRadius(size: number): number {
-    // Capped smaller so planets don't visually crowd each other
-    return Math.max(0.55, Math.min(2.2, (size / 1000) * 3.8));
+    return Math.max(0.4, Math.min(1.6, (size / 1000) * 2.8));
   }
 
   private hexColor(css: string): number {
@@ -924,8 +927,8 @@ export class GalaxyMapThree {
       if (routeShown) {
         const blinkSpeed = this.routeBlinkSpeed(route.route.speed);
         const blink = (Math.sin(this.clock * blinkSpeed) + 1) / 2;
-        traveledMat.opacity = (0.06 + blink * 0.06) * activeFactor;
-        dashMat.opacity = (0.55 + blink * 0.4) * activeFactor;
+        traveledMat.opacity = (0.35 + blink * 0.15) * activeFactor;
+        dashMat.opacity = (0.75 + blink * 0.2) * activeFactor;
       } else {
         traveledMat.opacity = 0;
         dashMat.opacity = 0;
@@ -999,8 +1002,8 @@ export class GalaxyMapThree {
       const traveledMat = route.traveledLine.material as THREE.LineBasicMaterial;
       const dashMat = route.laneDashes.material as THREE.LineBasicMaterial;
       const activeFactor = route.route.active === false ? 0.45 : 1;
-      traveledMat.opacity = shown ? 0.10 * activeFactor : 0;
-      dashMat.opacity = shown ? 0.72 * activeFactor : 0;
+      traveledMat.opacity = shown ? 0.40 * activeFactor : 0;
+      dashMat.opacity = shown ? 0.80 * activeFactor : 0;
     }
   }
 
@@ -1037,11 +1040,11 @@ export class GalaxyMapThree {
     const threat = this.fleetThreatLevel(ships);
     const hullColor = this.hexColor(route.color);
 
-    // Hull — larger and more aggressive for bigger fleets
+    // Hull — cone pointing along +X (travel direction; ship.rotation.z = shipAngle rotates +X → destination)
     const hullRadius = threat === 'high' ? 0.55 : threat === 'medium' ? 0.46 : 0.38;
     const hullLength = threat === 'high' ? 2.0  : threat === 'medium' ? 1.7  : 1.4;
     const hullGeo = new THREE.ConeGeometry(hullRadius, hullLength, threat === 'high' ? 6 : 10);
-    hullGeo.rotateX(Math.PI / 2);
+    hullGeo.rotateZ(-Math.PI / 2); // orient cone apex toward +X (travel direction)
     const hullEmissiveIntensity = threat === 'high' ? 0.55 : threat === 'medium' ? 0.38 : 0.22;
     const hullMat = new THREE.MeshPhongMaterial({
       color: hullColor,
@@ -1053,7 +1056,7 @@ export class GalaxyMapThree {
     hull.position.z = 0.2;
     ship.add(hull);
 
-    // Cockpit (sensor dome)
+    // Cockpit (sensor dome) — at the nose (+X)
     const cockpitR = hullRadius * 0.44;
     const cockpitGeo = new THREE.SphereGeometry(cockpitR, 10, 8);
     const cockpitColor = threat === 'high' ? 0xff6b6b : threat === 'medium' ? 0xfbbf24 : 0x93c5fd;
@@ -1065,12 +1068,12 @@ export class GalaxyMapThree {
       opacity: 0.92,
     });
     const cockpit = new THREE.Mesh(cockpitGeo, cockpitMat);
-    cockpit.position.set(0, hullLength * 0.28, 0.3);
+    cockpit.position.set(hullLength * 0.28, 0, 0.3);
     ship.add(cockpit);
 
-    // Wings
+    // Wings — span along Y (perpendicular to travel direction +X)
     const wingSpan = threat === 'high' ? 1.8 : threat === 'medium' ? 1.4 : 1.1;
-    const wingGeo = new THREE.BoxGeometry(wingSpan, 0.1, 0.32);
+    const wingGeo = new THREE.BoxGeometry(0.1, wingSpan, 0.32);
     const wingMat = new THREE.MeshPhongMaterial({
       color: 0xd1d5db,
       emissive: threat === 'high' ? 0x7f1d1d : 0x1e293b,
@@ -1081,7 +1084,7 @@ export class GalaxyMapThree {
     wing.position.z = 0.18;
     ship.add(wing);
 
-    // Engine glow
+    // Engine glow — at the tail (-X)
     const engineColor = threat === 'high' ? 0xff4400 : threat === 'medium' ? 0xfbbf24 : 0x38bdf8;
     const engineGeo = new THREE.SphereGeometry(hullRadius * 0.38, 10, 8);
     const engineMat = new THREE.MeshBasicMaterial({
@@ -1092,7 +1095,7 @@ export class GalaxyMapThree {
       depthWrite: false,
     });
     const engine = new THREE.Mesh(engineGeo, engineMat);
-    engine.position.set(0, -hullLength * 0.55, 0.18);
+    engine.position.set(-hullLength * 0.55, 0, 0.18);
     ship.add(engine);
 
     // Threat ring for large fleets (hexagon silhouette)

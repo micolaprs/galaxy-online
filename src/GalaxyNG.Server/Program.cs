@@ -41,7 +41,6 @@ else
 }
 
 builder.Services.AddSingleton<LlmService>();
-builder.Services.AddSingleton<LlmQueueService>();
 builder.Services.AddSingleton<GameService>();
 
 // ASP.NET

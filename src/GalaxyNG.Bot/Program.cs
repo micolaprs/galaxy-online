@@ -30,8 +30,6 @@ var host = Host.CreateDefaultBuilder(args)
             StrategyId = cfg["Bot:StrategyId"],
             LlmTimeoutSeconds = int.TryParse(cfg["Bot:LlmTimeoutSeconds"], out int lts)
                 ? Math.Clamp(lts, 30, 600) : 180,
-            TurnStartDelaySeconds = int.TryParse(cfg["Bot:TurnStartDelaySeconds"], out int tsd)
-                ? Math.Max(0, tsd) : 0,
             PollIntervalSeconds = int.TryParse(cfg["Bot:PollIntervalSeconds"], out int pi)
                 ? Math.Clamp(pi, 3, 120) : 8,
             Llm = llmConfig,

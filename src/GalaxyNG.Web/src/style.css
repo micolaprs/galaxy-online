@@ -82,7 +82,7 @@ input:focus { outline: none; border-color: var(--accent); }
 .game-id   { font-weight: bold; color: var(--accent); }
 .turn-label{ color: var(--yellow); }
 
-#galaxy-canvas { width: 320px; height: 320px; cursor: crosshair; flex-shrink: 0; }
+.galaxy-map-container { width: 320px; height: 320px; cursor: crosshair; flex-shrink: 0; position: relative; overflow: hidden; }
 
 .planet-info {
   flex: 1; padding: 10px 12px; font-size: 12px; color: var(--muted);

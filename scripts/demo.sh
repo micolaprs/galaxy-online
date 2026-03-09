@@ -18,10 +18,10 @@ GALAXY_SIZE=""
 BOTS_ONLY=true
 OPEN_BROWSER=true
 NUM_BOTS=3
-DO_KILL=true    # по умолчанию: убиваем старые процессы
+DO_KILL=false   # по умолчанию: не убиваем старые процессы (watch перезапускается сам)
 DO_CLEAN=false  # по умолчанию: возобновляем последнюю игру
 FORCE_NEW=false # --new: удалить старые и создать новую
-DO_CLEAN_LOGS=true # по умолчанию: очищаем server/bot логи перед стартом
+DO_CLEAN_LOGS=false # по умолчанию: не очищаем логи
 LLM_PROVIDER="${GALAXYNG_BOT_LLM_PROVIDER:-openai/codex}"
 PROVIDER_AUTH_DIR="${GALAXYNG_OPENAI_CODEX_AUTH_DIR:-}"
 MAX_TURNS="${GALAXYNG_DEMO_MAX_TURNS:-60}"  # drives galaxy size (more turns = bigger galaxy)
@@ -34,6 +34,7 @@ while [[ $# -gt 0 ]]; do
     -s|--size)      GALAXY_SIZE="$2"; shift 2 ;; # explicit override
     -o|--open)      OPEN_BROWSER=true;  shift ;;
     --no-open)      OPEN_BROWSER=false; shift ;;
+    --kill)         DO_KILL=true; DO_CLEAN_LOGS=true; shift ;;
     --no-kill)      DO_KILL=false; shift ;;
     --clean-logs)   DO_CLEAN_LOGS=true; shift ;;
     --no-clean-logs) DO_CLEAN_LOGS=false; shift ;;
@@ -54,9 +55,10 @@ while [[ $# -gt 0 ]]; do
       echo "  -s, --size SIZE       Размер галактики (по умолчанию: 200)"
       echo "  -o, --open            Открыть браузер после запуска (по умолчанию)"
       echo "  --no-open             Не открывать браузер"
-      echo "  --no-kill             Не убивать уже запущенные сервер/боты"
-      echo "  --clean-logs          Очистить /tmp-логи перед стартом (по умолчанию)"
-      echo "  --no-clean-logs       Не очищать /tmp-логи перед стартом"
+      echo "  --kill                Убить старые процессы и очистить логи перед стартом"
+      echo "  --no-kill             Не убивать уже запущенные сервер/боты (по умолчанию)"
+      echo "  --clean-logs          Очистить /tmp-логи перед стартом"
+      echo "  --no-clean-logs       Не очищать /tmp-логи перед стартом (по умолчанию)"
       echo "  --openai-codex        Быстрый флаг: LLM-провайдер openai/codex"
       echo "  --provider NAME       LLM-провайдер: lmstudio | openai/codex"
       echo "  --auth-dir PATH       Путь к папке auth-файлов Codex (для openai/codex)"
@@ -74,7 +76,8 @@ while [[ $# -gt 0 ]]; do
 done
 
 # ── Конфигурация игроков ─────────────────────────────────────────────────────
-SERVER_URL="http://localhost:5055"
+SERVER_URL="${GALAXYNG_SERVER_URL:-http://localhost:5055}"
+SERVER_BIND_URL="${GALAXYNG_SERVER_BIND_URL:-http://0.0.0.0:5055}"
 GAME_NAME="Demo"
 HUMAN="Humans"
 HUMAN_PW="pw1"
@@ -302,23 +305,16 @@ if [[ -n "$BOT_LLM_AUTH_DIR" ]]; then
   ok "Auth dir: $BOT_LLM_AUTH_DIR"
 fi
 
-# ── LLM throttle settings ────────────────────────────────────────────────────
-# Stagger bots so they don't hammer the LLM simultaneously.
-# Each bot waits STAGGER_SECONDS × its_index before responding to a new turn.
-# Override via env: GALAXYNG_BOT_LLM_TIMEOUT, GALAXYNG_BOT_STAGGER, GALAXYNG_BOT_POLL_INTERVAL
+# ── LLM settings ─────────────────────────────────────────────────────────────
+# lmstudio: bots use a named OS semaphore (GalaxyNG_LlmQueue) for serialization — no stagger needed.
+# openai/codex: cloud API handles parallel requests fine.
 BOT_LLM_TIMEOUT="${GALAXYNG_BOT_LLM_TIMEOUT:-240}"
-if [[ "$BOT_LLM_PROVIDER" == "lmstudio" ]]; then
-  STAGGER_SECONDS="${GALAXYNG_BOT_STAGGER:-0}"   # slot queue handles ordering
-else
-  STAGGER_SECONDS="${GALAXYNG_BOT_STAGGER:-70}"
-fi
 BOT_POLL_INTERVAL="${GALAXYNG_BOT_POLL_INTERVAL:-12}"
-info "LLM: timeout=${BOT_LLM_TIMEOUT}с, stagger=${STAGGER_SECONDS}с/бот, poll=${BOT_POLL_INTERVAL}с"
+info "LLM: timeout=${BOT_LLM_TIMEOUT}с, poll=${BOT_POLL_INTERVAL}с"
 
-# ── Шаг 2: сборка и запуск сервера ───────────────────────────────────────────
-info "Шаг 2/5 — Сборка и запуск сервера…"
+# ── Шаг 2: запуск сервера (dotnet watch) ─────────────────────────────────────
+info "Шаг 2/5 — Запуск сервера…"
 cd "$SERVER_DIR"
-dotnet build -c Release -v quiet 2>&1 | tail -3
 
 if curl -sf "$SERVER_URL/api/games" > /dev/null 2>&1; then
   warn "Сервер уже работает на $SERVER_URL — используем существующий"
@@ -328,13 +324,13 @@ else
   Llm__Model="$SERVER_LLM_MODEL" \
   Llm__ApiKey="$SERVER_LLM_API_KEY" \
   Llm__AccountId="$SERVER_LLM_ACCOUNT_ID" \
-    dotnet run -c Release --no-build --no-launch-profile --urls "http://localhost:5055" \
-    > /tmp/galaxyng-server.log 2>&1 &
+    dotnet watch run --no-launch-profile --urls "$SERVER_BIND_URL" \
+    >> /tmp/galaxyng-server.log 2>&1 &
   SERVER_PID=$!
   SERVER_MANAGED=true
 
   info "Ожидаем готовности сервера…"
-  MAX_WAIT=60
+  MAX_WAIT=90
   for i in $(seq 1 $MAX_WAIT); do
     if curl -sf "$SERVER_URL/api/games" > /dev/null 2>&1; then
       ok "Сервер запущен (PID $SERVER_PID, лог: /tmp/galaxyng-server.log)"
@@ -446,36 +442,37 @@ if [[ -z "$GAME_ID" ]]; then
   ok "Игра создана: $GAME_ID"
 fi
 
-# ── Шаг 4: сборка и запуск ботов ─────────────────────────────────────────────
-info "Шаг 4/5 — Сборка ботов…"
+# ── Шаг 4: запуск ботов (dotnet watch) ───────────────────────────────────────
+info "Шаг 4/5 — Запуск ботов…"
 cd "$BOT_DIR"
-dotnet build -c Release -v quiet 2>&1 | tail -3
 
-info "Запуск ${#BOT_NAMES[@]} ботов…"
-for i in "${!BOT_NAMES[@]}"; do
-  BOT_NAME="${BOT_NAMES[$i]}"
-  BOT_PW="${BOT_PWS[$i]}"
-  TURN_DELAY=$((i * STAGGER_SECONDS))
-  LOG_FILE="/tmp/galaxyng-bot-${BOT_NAME}.log"
-  [[ $TURN_DELAY -gt 0 ]] && info "  $BOT_NAME → задержка ответа: ${TURN_DELAY}с (слот LLM #$i)"
-  Bot__GameId="$GAME_ID" \
-  Bot__RaceName="$BOT_NAME" \
-  Bot__Password="$BOT_PW" \
-  Bot__ServerUrl="$SERVER_URL" \
-  Bot__LlmTimeoutSeconds="$BOT_LLM_TIMEOUT" \
-  Bot__TurnStartDelaySeconds="$TURN_DELAY" \
-  Bot__PollIntervalSeconds="$BOT_POLL_INTERVAL" \
-  Bot__Llm__Provider="$BOT_LLM_PROVIDER" \
-  Bot__Llm__Api="$BOT_LLM_API" \
-  Bot__Llm__BaseUrl="$BOT_LLM_BASE_URL" \
-  Bot__Llm__Model="$BOT_LLM_MODEL" \
-  Bot__Llm__ApiKey="$BOT_LLM_API_KEY" \
-  Bot__Llm__AccountId="$BOT_LLM_ACCOUNT_ID" \
-  Bot__Llm__AuthFilesDir="$BOT_LLM_AUTH_DIR" \
-    dotnet run -c Release --no-build --no-launch-profile >> "$LOG_FILE" 2>&1 &
-  BOT_PIDS+=($!)
-  ok "Бот $BOT_NAME запущен (PID ${BOT_PIDS[$i]}, лог: $LOG_FILE)"
-done
+# Если DO_KILL=false и боты уже запущены — не дублируем
+if ! $DO_KILL && pgrep -f "GalaxyNG.Bot" > /dev/null 2>&1; then
+  warn "Боты уже запущены — пропускаем (используй --kill для перезапуска)"
+else
+  info "Запуск ${#BOT_NAMES[@]} ботов…"
+  for i in "${!BOT_NAMES[@]}"; do
+    BOT_NAME="${BOT_NAMES[$i]}"
+    BOT_PW="${BOT_PWS[$i]}"
+    LOG_FILE="/tmp/galaxyng-bot-${BOT_NAME}.log"
+    Bot__GameId="$GAME_ID" \
+    Bot__RaceName="$BOT_NAME" \
+    Bot__Password="$BOT_PW" \
+    Bot__ServerUrl="$SERVER_URL" \
+    Bot__LlmTimeoutSeconds="$BOT_LLM_TIMEOUT" \
+    Bot__PollIntervalSeconds="$BOT_POLL_INTERVAL" \
+    Bot__Llm__Provider="$BOT_LLM_PROVIDER" \
+    Bot__Llm__Api="$BOT_LLM_API" \
+    Bot__Llm__BaseUrl="$BOT_LLM_BASE_URL" \
+    Bot__Llm__Model="$BOT_LLM_MODEL" \
+    Bot__Llm__ApiKey="$BOT_LLM_API_KEY" \
+    Bot__Llm__AccountId="$BOT_LLM_ACCOUNT_ID" \
+    Bot__Llm__AuthFilesDir="$BOT_LLM_AUTH_DIR" \
+      dotnet watch run --no-launch-profile >> "$LOG_FILE" 2>&1 &
+    BOT_PIDS+=($!)
+    ok "Бот $BOT_NAME запущен (PID ${BOT_PIDS[$i]}, лог: $LOG_FILE)"
+  done
+fi
 
 # ── Шаг 5: итог ──────────────────────────────────────────────────────────────
 if $BOTS_ONLY; then

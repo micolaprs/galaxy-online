@@ -7,7 +7,7 @@ using ModelContextProtocol.Server;
 namespace GalaxyNG.Server.Mcp;
 
 [McpServerToolType]
-public sealed class GameTools(GameService svc, LlmQueueService llmQueue)
+public sealed class GameTools(GameService svc)
 {
     [McpServerTool, Description("Get general information about a game: galaxy size, current turn, list of races.")]
     public async Task<string> GetGameInfo(
@@ -275,55 +275,6 @@ public sealed class GameTools(GameService svc, LlmQueueService llmQueue)
         sb.AppendLine($"  Attack strength: {st.AttackStrength(tech.Weapons):F2}");
         sb.AppendLine($"  Defense:         {st.DefenseStrength(tech.Shields, tech.Cargo, 0):F2}");
         return sb.ToString();
-    }
-
-    [McpServerTool, Description(
-        "Try to acquire the global LLM serialization slot. Returns 'acquired' if successful, 'busy' if another race holds it. " +
-        "Call with leaseDurationSeconds = LlmTimeoutSeconds + 60 to cover the full call duration.")]
-    public async Task<string> TryAcquireLlmSlot(
-        [Description("Game ID")] string gameId,
-        [Description("Your race name")] string raceName,
-        [Description("Your password")] string password,
-        [Description("Lease duration in seconds (set to LlmTimeoutSeconds + 60)")] int leaseDurationSeconds = 300,
-        CancellationToken ct = default)
-    {
-        var game = await svc.GetGameAsync(gameId, ct);
-        if (game is null)
-        {
-            return """{"error":"game_not_found"}""";
-        }
-
-        var player = game.GetPlayer(raceName);
-        if (player is null || player.Password != password)
-        {
-            return """{"error":"auth_failed"}""";
-        }
-
-        return llmQueue.TryAcquire(raceName, leaseDurationSeconds) ? "acquired" : "busy";
-    }
-
-    [McpServerTool, Description(
-        "Release the global LLM serialization slot held by this race. Call this after every LLM call completes (or fails).")]
-    public async Task<string> ReleaseLlmSlot(
-        [Description("Game ID")] string gameId,
-        [Description("Your race name")] string raceName,
-        [Description("Your password")] string password,
-        CancellationToken ct = default)
-    {
-        var game = await svc.GetGameAsync(gameId, ct);
-        if (game is null)
-        {
-            return """{"error":"game_not_found"}""";
-        }
-
-        var player = game.GetPlayer(raceName);
-        if (player is null || player.Password != password)
-        {
-            return """{"error":"auth_failed"}""";
-        }
-
-        llmQueue.Release(raceName);
-        return "released";
     }
 
     private static TechLevels ParseTech(string s)

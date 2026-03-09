@@ -1,11 +1,16 @@
 import { api } from '../api/client.js';
-import type { Session } from '../types/api.js';
-import { GalaxyMap, type MapPlanet } from './GalaxyMap.js';
+import type { Session, SpectateData, SpectatePlayer } from '../types/api.js';
+import { GalaxyMapThree, type ThreePlanet, type ThreeFleetRoute, type ThreeCombatEvents } from './GalaxyMapThree.js';
 import { OrdersEditor } from './OrdersEditor.js';
+
+const PLAYER_COLORS = [
+  '#4ade80','#38bdf8','#f87171','#facc15',
+  '#a78bfa','#fb923c','#34d399','#e879f9',
+];
 
 export class GameView {
   private el: HTMLElement;
-  private map!: GalaxyMap;
+  private map!: GalaxyMapThree;
   private editor!: OrdersEditor;
   private reportEl!: HTMLElement;
   private statusBar!: HTMLElement;
@@ -13,6 +18,7 @@ export class GameView {
   private gameId: string;
   private pollTimer: number | null = null;
   private currentTurn = -1;
+  private playerColorMap = new Map<string, string>();
 
   constructor(container: HTMLElement, gameId: string, session: Session) {
     this.el      = container;
@@ -25,6 +31,7 @@ export class GameView {
 
   destroy(): void {
     if (this.pollTimer) clearInterval(this.pollTimer);
+    this.map?.destroy();
   }
 
   private render(): void {
@@ -35,7 +42,7 @@ export class GameView {
             <span id="game-id-label" class="game-id"></span>
             <span id="turn-label" class="turn-label"></span>
           </div>
-          <canvas id="galaxy-canvas" width="320" height="320"></canvas>
+          <div id="galaxy-map-container" class="galaxy-map-container"></div>
           <div id="planet-info" class="planet-info">
             <em>Click a planet</em>
           </div>
@@ -56,12 +63,10 @@ export class GameView {
       <div class="status-bar" id="status-bar"></div>
     `;
 
-    // Map
-    const canvas = this.el.querySelector<HTMLCanvasElement>('#galaxy-canvas')!;
-    this.map = new GalaxyMap(canvas);
+    const mapContainer = this.el.querySelector<HTMLElement>('#galaxy-map-container')!;
+    this.map = new GalaxyMapThree(mapContainer);
     this.map.onPlanetClick = name => this.showPlanetInfo(name);
 
-    // Orders editor
     const ordersContainer = this.el.querySelector<HTMLElement>('#orders-container')!;
     this.editor = new OrdersEditor(ordersContainer);
     this.editor.setContext(this.gameId, this.session);
@@ -69,7 +74,6 @@ export class GameView {
     this.reportEl  = this.el.querySelector('#report-text')!;
     this.statusBar = this.el.querySelector('#status-bar')!;
 
-    // Panel tabs
     this.el.querySelectorAll<HTMLButtonElement>('.ptab').forEach(btn => {
       btn.addEventListener('click', () => {
         this.el.querySelectorAll('.ptab').forEach(b => b.classList.remove('active'));
@@ -83,24 +87,25 @@ export class GameView {
 
     this.el.querySelector('#game-id-label')!.textContent = `Game: ${this.gameId}`;
 
-    // Run Turn button (host only — in status bar)
     this.statusBar.innerHTML = `
       <span id="status-msg">Loading…</span>
       <button class="btn btn-sm btn-warning" id="btn-run-turn">▶ Run Turn</button>
     `;
-    this.el.querySelector('#btn-run-turn')!.addEventListener('click', () => this.runTurn());
+    this.el.querySelector('#btn-run-turn')!.addEventListener('click', () => void this.runTurn());
   }
 
   private async refresh(): Promise<void> {
     try {
-      const game = await api.getGame(this.gameId);
-      this.el.querySelector('#turn-label')!.textContent = `Turn ${game.turn}`;
-      this.setStatus(`Turn ${game.turn} | Players: ${game.players.map(p =>
+      const data = await api.spectate(this.gameId);
+      this.el.querySelector('#turn-label')!.textContent = `Turn ${data.turn}`;
+      this.setStatus(`Turn ${data.turn} | Players: ${data.players.map(p =>
         `${p.name}${p.submitted ? '✓' : ''}`).join(', ')}`);
 
-      if (game.turn !== this.currentTurn) {
-        this.currentTurn = game.turn;
-        await this.loadMapData(game);
+      this.updatePlayerColors(data.players);
+      this.updateMap(data);
+
+      if (data.turn !== this.currentTurn) {
+        this.currentTurn = data.turn;
         await this.loadReport();
       }
     } catch (e) {
@@ -108,14 +113,57 @@ export class GameView {
     }
   }
 
-  private async loadMapData(game: { galaxySize: number }): Promise<void> {
-    // Parse report to build planet list (simple approach: use /api/games/{id})
-    // For MVP we read the text report and extract planet lines
-    try {
-      const report  = await api.getReport(this.gameId, this.session);
-      const planets = parsePlanetsFromReport(report, this.session.raceName);
-      this.map.setData(game.galaxySize, planets);
-    } catch { /* ignore map error */ }
+  private updatePlayerColors(players: SpectatePlayer[]): void {
+    players.forEach((p, i) => {
+      if (!this.playerColorMap.has(p.id))
+        this.playerColorMap.set(p.id, PLAYER_COLORS[i % PLAYER_COLORS.length]!);
+    });
+  }
+
+  private updateMap(data: SpectateData): void {
+    const planets: ThreePlanet[] = data.planets.map(p => ({
+      name:       p.name,
+      x:          p.x,
+      y:          p.y,
+      size:       p.size,
+      ownerId:    p.ownerId,
+      population: p.population,
+      color: p.ownerId
+        ? (this.playerColorMap.get(p.ownerId) ?? '#888')
+        : '#334466',
+    }));
+
+    const planetByName = new Map(planets.map(p => [p.name, p] as const));
+    const fleetRoutes: ThreeFleetRoute[] = (data.fleetRoutes ?? [])
+      .map(route => {
+        const from = planetByName.get(route.origin);
+        const to   = planetByName.get(route.destination);
+        if (!from || !to) return null;
+        return {
+          ownerId:     route.ownerId,
+          ownerName:   data.players.find(p => p.id === route.ownerId)?.name ?? route.ownerId,
+          origin:      route.origin,
+          destination: route.destination,
+          x1: from.x, y1: from.y,
+          x2: to.x,   y2: to.y,
+          color:    this.playerColorMap.get(route.ownerId) ?? '#94a3b8',
+          fleetName: route.fleetName,
+          ships:    route.ships,
+          active:   route.active ?? true,
+          speed:    typeof route.speed === 'number' ? route.speed : undefined,
+          progress: typeof route.progress === 'number' ? route.progress : undefined,
+        };
+      })
+      .filter((r): r is ThreeFleetRoute => r !== null);
+
+    const combatEvents: ThreeCombatEvents = {
+      turn: data.turn,
+      battlePlanets:  data.battles.map(b => b.planetName),
+      bombingPlanets: data.bombings.map(b => b.planetName),
+    };
+
+    this.map.setData(data.galaxySize, planets, fleetRoutes, combatEvents);
+    this.map.setRouteDisplay(true, null);
   }
 
   private async loadReport(): Promise<void> {
@@ -156,37 +204,4 @@ export class GameView {
   private startPolling(): void {
     this.pollTimer = window.setInterval(() => void this.refresh(), 15_000);
   }
-}
-
-// ---- Parse planet positions from the text report ----
-function parsePlanetsFromReport(report: string, myRace: string): MapPlanet[] {
-  const planets: MapPlanet[] = [];
-  const lines = report.split('\n');
-  let inMyPlanets = false;
-  let inAlien = false;
-  let inUninhabited = false;
-
-  for (const line of lines) {
-    if (line.includes('YOUR PLANETS')) { inMyPlanets = true; inAlien = false; inUninhabited = false; continue; }
-    if (line.includes('ALIEN PLANETS')) { inAlien = true; inMyPlanets = false; inUninhabited = false; continue; }
-    if (line.includes('UNINHABITED PLANETS')) { inUninhabited = true; inMyPlanets = false; inAlien = false; continue; }
-    if (line.startsWith('=')) { inMyPlanets = false; inAlien = false; inUninhabited = false; }
-
-    if (inMyPlanets || inAlien || inUninhabited) {
-      // Format: Name   X      Y     Size   ...
-      const m = line.match(/^(\S+)\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)/);
-      if (!m) continue;
-      const [, name, xs, ys, sizes] = m;
-      if (!name || !xs || !ys || !sizes) continue;
-      planets.push({
-        name,
-        x: parseFloat(xs),
-        y: parseFloat(ys),
-        size: parseFloat(sizes),
-        owner: inMyPlanets ? 'mine' : inUninhabited ? 'neutral' : 'enemy',
-        hasShips: false,
-      });
-    }
-  }
-  return planets;
 }
