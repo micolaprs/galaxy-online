@@ -558,6 +558,7 @@ export class GalaxyMapThree {
       const laneDashes = new THREE.LineSegments(dashGeo, dashMat);
       laneDashes.userData['fleetRoute'] = route;
       laneDashes.renderOrder = 11;
+      laneDashes.frustumCulled = false;
       this.scene.add(laneDashes);
       this.cleanupMeshes.push(laneDashes);
 
@@ -601,6 +602,7 @@ export class GalaxyMapThree {
       });
       const exhaustParticles = new THREE.Points(exhaustGeo, exhaustMat);
       exhaustParticles.userData['fleetRoute'] = route;
+      exhaustParticles.frustumCulled = false;
       this.scene.add(exhaustParticles);
       this.cleanupMeshes.push(exhaustParticles);
 
