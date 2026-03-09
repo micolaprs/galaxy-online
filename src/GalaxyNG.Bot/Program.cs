@@ -12,7 +12,7 @@ var host = Host.CreateDefaultBuilder(args)
     {
         // Forward every bot log line to the server's web console (fire-and-forget)
         var serverUrl = ctx.Configuration["Bot:ServerUrl"] ?? "http://localhost:5055";
-        var raceName  = ctx.Configuration["Bot:RaceName"]  ?? "Bot";
+        var raceName = ctx.Configuration["Bot:RaceName"] ?? "Bot";
         logging.AddProvider(new RemoteLoggerProvider(serverUrl, raceName));
     })
     .ConfigureServices((ctx, services) =>
@@ -23,9 +23,9 @@ var host = Host.CreateDefaultBuilder(args)
 
         var botConfig = new BotConfig
         {
-            GameId    = cfg["Bot:GameId"]    ?? throw new InvalidOperationException("Bot:GameId required"),
-            RaceName  = cfg["Bot:RaceName"]  ?? throw new InvalidOperationException("Bot:RaceName required"),
-            Password  = cfg["Bot:Password"]  ?? throw new InvalidOperationException("Bot:Password required"),
+            GameId = cfg["Bot:GameId"] ?? throw new InvalidOperationException("Bot:GameId required"),
+            RaceName = cfg["Bot:RaceName"] ?? throw new InvalidOperationException("Bot:RaceName required"),
+            Password = cfg["Bot:Password"] ?? throw new InvalidOperationException("Bot:Password required"),
             ServerUrl = cfg["Bot:ServerUrl"] ?? "http://localhost:5000",
             StrategyId = cfg["Bot:StrategyId"],
             LlmTimeoutSeconds = int.TryParse(cfg["Bot:LlmTimeoutSeconds"], out int lts)
@@ -42,18 +42,24 @@ var host = Host.CreateDefaultBuilder(args)
 
         services.AddHttpClient("llm", (sp, client) =>
         {
-            var c  = sp.GetRequiredService<LlmConfig>();
+            var c = sp.GetRequiredService<LlmConfig>();
             var bc = sp.GetRequiredService<BotConfig>();
             client.BaseAddress = new Uri(c.BaseUrl.TrimEnd('/') + "/");
             // Must be longer than LlmTimeoutSeconds so the CancellationToken fires first,
             // giving a clean timeout message instead of a raw socket error.
             client.Timeout = TimeSpan.FromSeconds(bc.LlmTimeoutSeconds + 120);
             if (!string.IsNullOrWhiteSpace(c.ApiKey))
+            {
                 client.DefaultRequestHeaders.Add("Authorization", $"Bearer {c.ApiKey}");
+            }
+
             if (IsOpenAiCodexProvider(c.Provider))
             {
                 if (!string.IsNullOrWhiteSpace(c.AccountId))
+                {
                     client.DefaultRequestHeaders.Add("chatgpt-account-id", c.AccountId);
+                }
+
                 client.DefaultRequestHeaders.Add("OpenAI-Beta", "responses=experimental");
                 client.DefaultRequestHeaders.Add("originator", "pi");
                 client.DefaultRequestHeaders.Add("accept", "text/event-stream");
@@ -63,9 +69,9 @@ var host = Host.CreateDefaultBuilder(args)
         services.AddSingleton<LlmClient>(sp =>
         {
             var factory = sp.GetRequiredService<IHttpClientFactory>();
-            var http    = factory.CreateClient("llm");
-            var cfg     = sp.GetRequiredService<LlmConfig>();
-            var log     = sp.GetRequiredService<ILogger<LlmClient>>();
+            var http = factory.CreateClient("llm");
+            var cfg = sp.GetRequiredService<LlmConfig>();
+            var log = sp.GetRequiredService<ILogger<LlmClient>>();
             return new LlmClient(http, cfg, log);
         });
         services.AddSingleton<BotAgent>();
@@ -93,26 +99,34 @@ static LlmConfig BuildLlmConfig(IConfiguration cfg)
 
     var llm = new LlmConfig
     {
-        Provider            = provider,
-        Api                 = cfg["Bot:Llm:Api"]                 ?? defaultApi,
-        BaseUrl             = cfg["Bot:Llm:BaseUrl"]             ?? defaultBaseUrl,
-        Model               = cfg["Bot:Llm:Model"]               ?? defaultModel,
-        Temperature         = double.TryParse(cfg["Bot:Llm:Temperature"], out double t) ? t : 0.7,
-        MaxTokens           = int.TryParse(cfg["Bot:Llm:MaxTokens"], out int m) ? m : 4096,
-        ApiKey              = cfg["Bot:Llm:ApiKey"] ?? (isOpenAiCodex ? "" : "lm-studio"),
-        AccountId           = cfg["Bot:Llm:AccountId"] ?? "",
-        AuthFilesDir        = authFilesDir,
+        Provider = provider,
+        Api = cfg["Bot:Llm:Api"] ?? defaultApi,
+        BaseUrl = cfg["Bot:Llm:BaseUrl"] ?? defaultBaseUrl,
+        Model = cfg["Bot:Llm:Model"] ?? defaultModel,
+        Temperature = double.TryParse(cfg["Bot:Llm:Temperature"], out double t) ? t : 0.7,
+        MaxTokens = int.TryParse(cfg["Bot:Llm:MaxTokens"], out int m) ? m : 4096,
+        ApiKey = cfg["Bot:Llm:ApiKey"] ?? (isOpenAiCodex ? "" : "lm-studio"),
+        AccountId = cfg["Bot:Llm:AccountId"] ?? "",
+        AuthFilesDir = authFilesDir,
     };
 
     if (isOpenAiCodex && !string.IsNullOrWhiteSpace(llm.AuthFilesDir))
     {
         if (TryReadOpenAiCodexCredentials(llm.AuthFilesDir, out var token, out var accountId))
+        {
             llm = llm with
             {
                 ApiKey = string.IsNullOrWhiteSpace(llm.ApiKey) ? token : llm.ApiKey,
                 AccountId = string.IsNullOrWhiteSpace(llm.AccountId) ? accountId : llm.AccountId,
             };
+        }
     }
+
+    var serializeDefault = provider.Trim().ToLowerInvariant() == "lmstudio";
+    var serialized = cfg["Bot:Llm:Serialized"] is string sv
+        ? sv.Equals("true", StringComparison.OrdinalIgnoreCase)
+        : serializeDefault;
+    llm = llm with { Serialized = serialized };
 
     return llm;
 }
@@ -125,7 +139,9 @@ static bool TryReadOpenAiCodexCredentials(string authFilesDir, out string token,
     {
         var authPath = Path.Combine(ExpandHome(authFilesDir), "auth.json");
         if (!File.Exists(authPath))
+        {
             return false;
+        }
 
         var auth = JsonDocument.Parse(File.ReadAllText(authPath));
         if (auth.RootElement.TryGetProperty("tokens", out var tokensNode) &&
@@ -136,9 +152,15 @@ static bool TryReadOpenAiCodexCredentials(string authFilesDir, out string token,
             {
                 token = value;
                 if (tokensNode.TryGetProperty("account_id", out var accountIdNode))
+                {
                     accountId = accountIdNode.GetString() ?? "";
+                }
+
                 if (string.IsNullOrWhiteSpace(accountId))
+                {
                     accountId = TryExtractAccountIdFromJwt(token);
+                }
+
                 return true;
             }
         }
@@ -167,7 +189,10 @@ static string TryExtractAccountIdFromJwt(string jwt)
     {
         var parts = jwt.Split('.');
         if (parts.Length < 2)
+        {
             return "";
+        }
+
         var payload = Base64UrlDecode(parts[1]);
         using var doc = JsonDocument.Parse(payload);
         if (doc.RootElement.TryGetProperty("https://api.openai.com/auth", out var authNode) &&
@@ -189,7 +214,10 @@ static string Base64UrlDecode(string input)
     var normalized = input.Replace('-', '+').Replace('_', '/');
     var padding = 4 - (normalized.Length % 4);
     if (padding is > 0 and < 4)
+    {
         normalized += new string('=', padding);
+    }
+
     var bytes = Convert.FromBase64String(normalized);
     return Encoding.UTF8.GetString(bytes);
 }
@@ -203,9 +231,14 @@ static bool IsOpenAiCodexProvider(string provider)
 static string ExpandHome(string path)
 {
     if (string.IsNullOrWhiteSpace(path))
+    {
         return path;
+    }
+
     if (!path.StartsWith("~/", StringComparison.Ordinal))
+    {
         return path;
+    }
 
     var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
     return Path.Combine(home, path[2..]);

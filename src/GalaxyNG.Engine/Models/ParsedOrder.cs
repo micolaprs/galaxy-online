@@ -23,5 +23,5 @@ public enum OrderKind
 public sealed record ParsedOrder(
     OrderKind Kind,
     string[] Args,
-    int      LineNumber = 0
+    int LineNumber = 0
 );

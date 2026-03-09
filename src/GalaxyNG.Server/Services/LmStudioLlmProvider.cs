@@ -33,7 +33,10 @@ public sealed class LmStudioLlmProvider(IConfiguration config, ILogger<LmStudioL
 
         using var req = new HttpRequestMessage(HttpMethod.Post, $"{_baseUrl}/chat/completions");
         if (!string.IsNullOrWhiteSpace(_apiKey))
+        {
             req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _apiKey);
+        }
+
         req.Content = JsonContent.Create(payload);
 
         using var resp = await _http.SendAsync(req, ct);

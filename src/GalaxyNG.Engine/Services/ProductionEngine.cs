@@ -9,7 +9,11 @@ public sealed class ProductionEngine
     {
         foreach (var planet in game.Planets.Values.Where(p => p.IsOwned))
         {
-            if (!game.Players.TryGetValue(planet.OwnerId!, out var owner)) continue;
+            if (!game.Players.TryGetValue(planet.OwnerId!, out var owner))
+            {
+                continue;
+            }
+
             ProducePlanet(planet, owner, game);
         }
     }
@@ -24,7 +28,7 @@ public sealed class ProductionEngine
                 // Need 1 material per 5 prod (cost: 5 prod + 1 mat per cap)
                 double maxCapByMat = planet.Stockpiles.Materials;
                 double maxCapByProd = prod / CapitalProdCost;
-                double capPossible  = Math.Min(maxCapByMat, maxCapByProd);
+                double capPossible = Math.Min(maxCapByMat, maxCapByProd);
 
                 if (capPossible < 1 && planet.Stockpiles.Materials < 1)
                 {
@@ -36,8 +40,8 @@ public sealed class ProductionEngine
                 }
 
                 double capProduced = Math.Floor(capPossible);
-                double prodUsed    = capProduced * CapitalProdCost;
-                double matUsed     = capProduced * CapitalMatCost;
+                double prodUsed = capProduced * CapitalProdCost;
+                double matUsed = capProduced * CapitalMatCost;
 
                 planet.Stockpiles = planet.Stockpiles
                     .WithCapital(planet.Stockpiles.Capital + capProduced)
@@ -96,12 +100,12 @@ public sealed class ProductionEngine
     private static double Research(double prod, double costPerPoint,
         double accum, double currentTech, out double newTech)
     {
-        accum   += prod;
-        newTech  = currentTech;
+        accum += prod;
+        newTech = currentTech;
         if (accum >= costPerPoint)
         {
             double gained = Math.Truncate(accum / costPerPoint);
-            accum   -= gained * costPerPoint;
+            accum -= gained * costPerPoint;
             newTech += gained;
         }
         return accum;
@@ -109,14 +113,17 @@ public sealed class ProductionEngine
 
     private static void BuildShips(Planet planet, Player owner, double prod)
     {
-        if (!owner.ShipTypes.TryGetValue(planet.ShipTypeName!, out var st)) return;
+        if (!owner.ShipTypes.TryGetValue(planet.ShipTypeName!, out var st))
+        {
+            return;
+        }
 
         double costPerShip = st.Mass * ShipProdPerMass;
-        double matPerShip  = st.Mass * ShipMatPerMass;
+        double matPerShip = st.Mass * ShipMatPerMass;
 
         // How many ships can we afford?
         double byProd = prod / costPerShip;
-        double byMat  = planet.Stockpiles.Materials / matPerShip;
+        double byMat = planet.Stockpiles.Materials / matPerShip;
 
         // Need materials; if insufficient, divert remaining prod to material first
         if (planet.Stockpiles.Materials < matPerShip)
@@ -135,7 +142,7 @@ public sealed class ProductionEngine
         }
 
         double prodUsed = ships * costPerShip;
-        double matUsed  = ships * matPerShip;
+        double matUsed = ships * matPerShip;
 
         planet.Stockpiles = planet.Stockpiles.WithMaterials(planet.Stockpiles.Materials - matUsed);
         planet.ExcessProd = prod - prodUsed;
@@ -156,11 +163,11 @@ public sealed class ProductionEngine
         {
             owner.Groups.Add(new Group
             {
-                Number       = owner.NextGroupNumber(),
+                Number = owner.NextGroupNumber(),
                 ShipTypeName = planet.ShipTypeName!,
-                Ships        = ships,
-                Tech         = owner.Tech,
-                At           = planet.Name,
+                Ships = ships,
+                Tech = owner.Tech,
+                At = planet.Name,
             });
         }
     }
@@ -169,9 +176,9 @@ public sealed class ProductionEngine
     {
         foreach (var planet in game.Planets.Values.Where(p => p.IsOwned && p.Population > 0))
         {
-            double growth       = planet.Population * PopGrowthRate;
-            double newPop       = planet.Population + growth;
-            double excess       = Math.Max(0, newPop - planet.Size);
+            double growth = planet.Population * PopGrowthRate;
+            double newPop = planet.Population + growth;
+            double excess = Math.Max(0, newPop - planet.Size);
 
             planet.Population = Math.Min(newPop, planet.Size);
 
@@ -196,9 +203,13 @@ public sealed class ProductionEngine
         {
             // Standard rule: all capital on planet used to grow industry
             double cap = planet.Stockpiles.Capital;
-            if (cap <= 0) continue;
+            if (cap <= 0)
+            {
+                continue;
+            }
+
             double freeSlots = planet.Size - planet.Industry;
-            double invest    = Math.Min(cap, freeSlots);
+            double invest = Math.Min(cap, freeSlots);
             planet.Industry += invest;
             planet.Stockpiles = planet.Stockpiles.WithCapital(cap - invest);
         }

@@ -10,10 +10,10 @@ public sealed class OrderParser
     /// </summary>
     public (List<ParsedOrder> orders, List<string> errors) Parse(string text)
     {
-        var orders     = new List<ParsedOrder>();
-        var errors     = new List<string>();
+        var orders = new List<ParsedOrder>();
+        var errors = new List<string>();
         bool inMessage = false;
-        var  msgLines  = new List<string>();
+        var msgLines = new List<string>();
         string[] msgTargets = [];
 
         int lineNum = 0;
@@ -22,7 +22,10 @@ public sealed class OrderParser
             lineNum++;
             var line = inMessage ? rawLine : StripComment(rawLine);
             line = line.Trim();
-            if (line.Length == 0) continue;
+            if (line.Length == 0)
+            {
+                continue;
+            }
 
             // Handle @ message block end (another @ closes it)
             if (inMessage)
@@ -35,12 +38,18 @@ public sealed class OrderParser
                     msgLines.Clear();
                 }
                 else
+                {
                     msgLines.Add(rawLine);
+                }
+
                 continue;
             }
 
             var parts = SplitLine(line);
-            if (parts.Length == 0) continue;
+            if (parts.Length == 0)
+            {
+                continue;
+            }
 
             char cmd = char.ToLowerInvariant(parts[0][0]);
 
@@ -48,14 +57,16 @@ public sealed class OrderParser
             {
                 if (cmd == '@')
                 {
-                    inMessage  = true;
+                    inMessage = true;
                     msgTargets = parts[1..];
                     continue;
                 }
 
                 var order = ParseLine(cmd, parts, lineNum);
                 if (order is not null)
+                {
                     orders.Add(order);
+                }
             }
             catch (OrderParseException ex)
             {
@@ -64,8 +75,10 @@ public sealed class OrderParser
         }
 
         if (inMessage && msgLines.Count > 0)
+        {
             orders.Add(new ParsedOrder(OrderKind.SendMessage,
                 [.. msgTargets, string.Join("\n", msgLines)]));
+        }
 
         return (orders, errors);
     }
@@ -87,13 +100,13 @@ public sealed class OrderParser
 
             'd' when IsFleetKeyword(parts, 1)
                   => Require(parts, 3, OrderKind.CreateFleet, lineNum),
-            'd'   => Require(parts, 7, OrderKind.DesignShip, lineNum),
+            'd' => Require(parts, 7, OrderKind.DesignShip, lineNum),
 
             't' => Require(parts, 3, OrderKind.RenameType, lineNum),
 
             'e' when IsFleetKeyword(parts, 1)
                   => Require(parts, 2, OrderKind.EliminateFleet, lineNum),
-            'e'   => Require(parts, 2, OrderKind.EliminateType, lineNum),
+            'e' => Require(parts, 2, OrderKind.EliminateType, lineNum),
 
             's' => ParseGroupOrFleet(parts, OrderKind.SendGroup, OrderKind.SendFleet, lineNum),
             'i' => ParseGroupOrFleet(parts, OrderKind.InterceptGroup, OrderKind.InterceptFleet, lineNum),
@@ -112,7 +125,7 @@ public sealed class OrderParser
 
             'o' => Require(parts, 2, OrderKind.SetOption, lineNum),
 
-            _   => null,  // unknown command — silently ignored like original
+            _ => null,  // unknown command — silently ignored like original
         };
 
     private static bool IsFleetKeyword(string[] parts, int idx) =>
@@ -122,14 +135,20 @@ public sealed class OrderParser
     private static ParsedOrder Require(string[] parts, int minArgs, OrderKind kind, int lineNum)
     {
         if (parts.Length < minArgs)
+        {
             throw new OrderParseException($"'{parts[0]}' requires at least {minArgs - 1} argument(s).");
+        }
+
         return new ParsedOrder(kind, parts[1..], lineNum);
     }
 
     private static ParsedOrder ParseGroupOrFleet(string[] parts, OrderKind groupKind, OrderKind fleetKind, int lineNum)
     {
         if (parts.Length < 2)
+        {
             throw new OrderParseException($"'{parts[0]}' requires at least 1 argument.");
+        }
+
         bool isFleet = !int.TryParse(parts[1], out _);
         return new ParsedOrder(isFleet ? fleetKind : groupKind, parts[1..], lineNum);
     }

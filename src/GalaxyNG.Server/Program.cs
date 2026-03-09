@@ -28,12 +28,20 @@ builder.Services.AddSingleton<TurnProcessor>(sp => new TurnProcessor(
 builder.Services.AddSingleton<GameStore>();
 var llmProvider = (builder.Configuration["Llm:Provider"] ?? "openai/codex").Trim().ToLowerInvariant();
 if (llmProvider is "openai/codex" or "openai-codex")
+{
     builder.Services.AddSingleton<ILlmProvider, CodexLlmProvider>();
+}
 else if (llmProvider is "lmstudio" or "lm-studio")
+{
     builder.Services.AddSingleton<ILlmProvider, LmStudioLlmProvider>();
+}
 else
+{
     throw new InvalidOperationException($"Unsupported Llm:Provider '{llmProvider}'. Supported: openai/codex, lmstudio.");
+}
+
 builder.Services.AddSingleton<LlmService>();
+builder.Services.AddSingleton<LlmQueueService>();
 builder.Services.AddSingleton<GameService>();
 
 // ASP.NET
@@ -72,8 +80,8 @@ app.Lifetime.ApplicationStarted.Register(() =>
         {
             await Task.Delay(500); // brief pause to let SignalR hub initialize
             var gameService = app.Services.GetRequiredService<GameService>();
-            var sysLog      = app.Services.GetRequiredService<ILogger<GameService>>();
-            var games       = await gameService.ListGamesAsync();
+            var sysLog = app.Services.GetRequiredService<ILogger<GameService>>();
+            var games = await gameService.ListGamesAsync();
             foreach (var game in games)
             {
                 if (game.AutoRunOnAllSubmitted && game.AllPlayersSubmitted())

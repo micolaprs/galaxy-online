@@ -46,7 +46,7 @@ public sealed class ReportGenerator
             foreach (var p in game.Players.Values.OrderByDescending(p =>
                 game.PlanetsOwnedBy(p.Id).Sum(pl => pl.Production)))
             {
-                var planets  = game.PlanetsOwnedBy(p.Id).ToList();
+                var planets = game.PlanetsOwnedBy(p.Id).ToList();
                 var totalPop = planets.Sum(pl => pl.Population);
                 var totalInd = planets.Sum(pl => pl.Industry);
                 string diplo = "";
@@ -56,7 +56,9 @@ public sealed class ReportGenerator
                     diplo = $" [ALLY T{until}]";
                 }
                 else if (player.AtWar.Contains(p.Id))
+                {
                     diplo = " [WAR]";
+                }
 
                 Line($"{p.Name + diplo,-20} {p.Tech.Drive,6:F2} {p.Tech.Weapons,6:F2} {p.Tech.Shields,6:F2} {p.Tech.Cargo,6:F2} {totalPop,8:F0} {totalInd,8:F0} {planets.Count,6}");
             }
@@ -65,22 +67,36 @@ public sealed class ReportGenerator
 
         private void MyShipTypes()
         {
-            if (player.ShipTypes.Count == 0) return;
+            if (player.ShipTypes.Count == 0)
+            {
+                return;
+            }
+
             Section("YOUR SHIP TYPES");
             Line($"{"Name",-20} {"Drive",6} {"Atk",5} {"Wpn",6} {"Shd",6} {"Cargo",6} {"Mass",8} {"Speed",8}");
             foreach (var st in player.ShipTypes.Values)
+            {
                 Line($"{st.Name,-20} {st.Drive,6:F2} {st.Attacks,5} {st.Weapons,6:F2} {st.Shields,6:F2} {st.Cargo,6:F2} {st.Mass,8:F2} {st.SpeedEmpty(player.Tech.Drive),8:F2}");
+            }
+
             Line();
         }
 
         private void AlienShipTypes()
         {
             var visible = VisibleAlienShipTypes();
-            if (visible.Count == 0) return;
+            if (visible.Count == 0)
+            {
+                return;
+            }
+
             Section("ALIEN SHIP TYPES");
             Line($"{"Race",-16} {"Name",-20} {"Drive",6} {"Atk",5} {"Wpn",6} {"Shd",6} {"Cargo",6} {"Mass",8}");
             foreach (var (race, st) in visible)
+            {
                 Line($"{race,-16} {st.Name,-20} {st.Drive,6:F2} {st.Attacks,5} {st.Weapons,6:F2} {st.Shields,6:F2} {st.Cargo,6:F2} {st.Mass,8:F2}");
+            }
+
             Line();
         }
 
@@ -88,19 +104,33 @@ public sealed class ReportGenerator
         {
             var relevant = game.Battles.Where(b => b.Participants.Contains(player.Name) ||
                                                     PlayerPlanets().Any(p => p.Name == b.PlanetName)).ToList();
-            if (relevant.Count == 0) return;
+            if (relevant.Count == 0)
+            {
+                return;
+            }
+
             Section("BATTLES");
             foreach (var b in relevant)
+            {
                 Line($"  {b.PlanetName}: {string.Join(" vs ", b.Participants)} → Winner: {b.Winner}");
+            }
+
             Line();
         }
 
         private void Bombings()
         {
-            if (game.Bombings.Count == 0) return;
+            if (game.Bombings.Count == 0)
+            {
+                return;
+            }
+
             Section("BOMBINGS");
             foreach (var b in game.Bombings)
+            {
                 Line($"  {b.PlanetName}: {b.AttackerRace} bombed (prev owner: {b.PreviousOwner ?? "none"})  Pop: {b.OldPopulation:F0}→{b.OldPopulation * 0.25:F0}  Ind: {b.OldIndustry:F0}→{b.OldIndustry * 0.25:F0}");
+            }
+
             Line();
         }
 
@@ -108,10 +138,14 @@ public sealed class ReportGenerator
         {
             Section("MAP");
             int mapSize = 60;
-            var grid    = new char[mapSize, mapSize];
+            var grid = new char[mapSize, mapSize];
             for (int r = 0; r < mapSize; r++)
-            for (int c = 0; c < mapSize; c++)
-                grid[r, c] = ' ';
+            {
+                for (int c = 0; c < mapSize; c++)
+                {
+                    grid[r, c] = ' ';
+                }
+            }
 
             double scale = mapSize / game.GalaxySize;
             foreach (var planet in game.Planets.Values)
@@ -119,23 +153,34 @@ public sealed class ReportGenerator
                 int col = Math.Clamp((int)(planet.X * scale), 0, mapSize - 1);
                 int row = Math.Clamp((int)((game.GalaxySize - planet.Y) * scale), 0, mapSize - 1);
                 grid[row, col] = planet.OwnerId == player.Id ? '*' :
-                                  planet.OwnerId is null       ? 'o' : '+';
+                                  planet.OwnerId is null ? 'o' : '+';
             }
 
             // Draw groups
             foreach (var g in player.Groups.Where(g => !g.InHyperspace))
             {
-                if (!game.Planets.TryGetValue(g.At, out var p)) continue;
+                if (!game.Planets.TryGetValue(g.At, out var p))
+                {
+                    continue;
+                }
+
                 int col = Math.Clamp((int)(p.X * scale), 0, mapSize - 1);
                 int row = Math.Clamp((int)((game.GalaxySize - p.Y) * scale), 0, mapSize - 1);
-                if (grid[row, col] == ' ') grid[row, col] = '.';
+                if (grid[row, col] == ' ')
+                {
+                    grid[row, col] = '.';
+                }
             }
 
             _sb.AppendLine("  " + new string('-', mapSize + 2));
             for (int r = 0; r < mapSize; r++)
             {
                 _sb.Append("  |");
-                for (int c = 0; c < mapSize; c++) _sb.Append(grid[r, c]);
+                for (int c = 0; c < mapSize; c++)
+                {
+                    _sb.Append(grid[r, c]);
+                }
+
                 _sb.AppendLine("|");
             }
             _sb.AppendLine("  " + new string('-', mapSize + 2));
@@ -152,7 +197,7 @@ public sealed class ReportGenerator
                 string prodLabel = p.Producing switch
                 {
                     ProductionType.Ship => p.ShipTypeName ?? "?",
-                    _                   => p.Producing.ToString().ToUpperInvariant()
+                    _ => p.Producing.ToString().ToUpperInvariant()
                 };
                 Line($"{p.Name,-20} {p.X,6:F1} {p.Y,6:F1} {p.Size,8:F1} {p.Population,8:F1} {p.Industry,8:F1} {p.Resources,6:F2} {prodLabel,-16} {p.Stockpiles.Capital,8:F1} {p.Stockpiles.Materials,8:F1} {p.Stockpiles.Colonists,6:F1}");
             }
@@ -161,7 +206,11 @@ public sealed class ReportGenerator
 
         private void MyGroups()
         {
-            if (player.Groups.Count == 0) return;
+            if (player.Groups.Count == 0)
+            {
+                return;
+            }
+
             Section("YOUR GROUPS");
             Line($"{"#",4} {"Ships",6} {"Type",-20} {"Drive",6} {"Wpn",6} {"Shd",6} {"Cargo",-8} {"At",-16} {"Dest",-16} {"Dist",8}");
             foreach (var g in player.Groups.OrderBy(g => g.Number))
@@ -177,7 +226,11 @@ public sealed class ReportGenerator
             var withIntel = game.Planets.Values
                 .Where(p => p.IsOwned && p.OwnerId != player.Id)
                 .ToList();
-            if (withIntel.Count == 0) return;
+            if (withIntel.Count == 0)
+            {
+                return;
+            }
+
             Section("ALIEN PLANETS");
             foreach (var p in withIntel)
             {
@@ -192,10 +245,17 @@ public sealed class ReportGenerator
             var visible = game.Planets.Values
                 .Where(p => !p.IsOwned)
                 .ToList();
-            if (visible.Count == 0) return;
+            if (visible.Count == 0)
+            {
+                return;
+            }
+
             Section("UNINHABITED PLANETS");
             foreach (var p in visible)
+            {
                 Line($"  {p.Name}  X:{p.X:F1} Y:{p.Y:F1}  Size:{p.Size:F1}  Res:{p.Resources:F2}");
+            }
+
             Line();
         }
 
@@ -210,18 +270,30 @@ public sealed class ReportGenerator
                 .Where(p => p.OwnerId == player.Id && p.IsHome)
                 .ToList();
             if (homePlanets.Count == 0)
+            {
                 homePlanets = PlayerPlanets().ToList();
+            }
 
             foreach (var other in game.Players.Values.Where(p => p.Id != player.Id))
-            foreach (var g in other.Groups.Where(g => !g.InHyperspace))
             {
-                if (!game.Planets.TryGetValue(g.At, out var fleetPlanet))
-                    continue;
-                var isVisible = homePlanets.Any(home => home.DistanceTo(fleetPlanet) <= HomeFleetVisibilityRadius);
-                if (!isVisible)
-                    continue;
-                if (other.ShipTypes.TryGetValue(g.ShipTypeName, out var st))
-                    visible.Add((other.Name, st));
+                foreach (var g in other.Groups.Where(g => !g.InHyperspace))
+                {
+                    if (!game.Planets.TryGetValue(g.At, out var fleetPlanet))
+                    {
+                        continue;
+                    }
+
+                    var isVisible = homePlanets.Any(home => home.DistanceTo(fleetPlanet) <= HomeFleetVisibilityRadius);
+                    if (!isVisible)
+                    {
+                        continue;
+                    }
+
+                    if (other.ShipTypes.TryGetValue(g.ShipTypeName, out var st))
+                    {
+                        visible.Add((other.Name, st));
+                    }
+                }
             }
 
             return visible.DistinctBy(x => (x.Item1, x.Item2.Name)).ToList();

@@ -1,4 +1,4 @@
-﻿namespace GalaxyNG.Engine.Tests;
+namespace GalaxyNG.Engine.Tests;
 
 public class UnitTest1
 {

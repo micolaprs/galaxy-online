@@ -26,7 +26,10 @@ public sealed class LlmService(IConfiguration config, ILlmProvider provider)
         Game game, string raceName, int turn, CancellationToken ct = default)
     {
         var hist = game.TurnHistory.FirstOrDefault(h => h.Turn == turn);
-        if (hist is null) return null;
+        if (hist is null)
+        {
+            return null;
+        }
 
         hist.PlayerOrders.TryGetValue(raceName, out var orders);
         var prompt = BuildTurnSummaryPrompt(raceName, turn, orders ?? "", hist.Battles, hist.Bombings);
@@ -61,14 +64,20 @@ public sealed class LlmService(IConfiguration config, ILlmProvider provider)
         sb.AppendLine("=== СОБЫТИЯ ПОСЛЕДНЕГО ХОДА ===");
 
         if (game.Battles.Count == 0 && game.Bombings.Count == 0)
+        {
             sb.AppendLine("Мирный ход — сражений не было.");
+        }
 
         foreach (var b in game.Battles)
+        {
             sb.AppendLine($"- Битва при {b.PlanetName}: {string.Join(" vs ", b.Participants)} → победитель: {b.Winner}");
+        }
 
         foreach (var b in game.Bombings)
+        {
             sb.AppendLine($"- {b.AttackerRace} бомбардировал {b.PlanetName}" +
                           (b.PreviousOwner != null ? $" (был {b.PreviousOwner})" : ""));
+        }
 
         sb.AppendLine();
         sb.AppendLine(
@@ -93,8 +102,15 @@ public sealed class LlmService(IConfiguration config, ILlmProvider provider)
         {
             sb.AppendLine();
             sb.AppendLine("=== СОБЫТИЯ ХОДА ===");
-            foreach (var b in battles) sb.AppendLine($"- {b}");
-            foreach (var b in bombings) sb.AppendLine($"- {b}");
+            foreach (var b in battles)
+            {
+                sb.AppendLine($"- {b}");
+            }
+
+            foreach (var b in bombings)
+            {
+                sb.AppendLine($"- {b}");
+            }
         }
 
         sb.AppendLine();

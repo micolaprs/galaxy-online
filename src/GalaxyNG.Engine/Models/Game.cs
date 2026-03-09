@@ -2,17 +2,17 @@ namespace GalaxyNG.Engine.Models;
 
 public sealed class Game
 {
-    public required string              Id           { get; init; }
-    public required string              Name         { get; set; }
-    public required double              GalaxySize   { get; init; }
-    public required int                 Turn         { get; set; }
+    public required string Id { get; init; }
+    public required string Name { get; set; }
+    public required double GalaxySize { get; init; }
+    public required int Turn { get; set; }
 
-    public Dictionary<string, Player>   Players      { get; init; } = [];
-    public Dictionary<string, Planet>   Planets      { get; init; } = [];
+    public Dictionary<string, Player> Players { get; init; } = [];
+    public Dictionary<string, Planet> Planets { get; init; } = [];
 
     // Turn results (cleared each turn)
-    public List<BattleRecord>           Battles      { get; set; } = [];
-    public List<BombingRecord>          Bombings     { get; set; } = [];
+    public List<BattleRecord> Battles { get; set; } = [];
+    public List<BombingRecord> Bombings { get; set; } = [];
 
     // Turn history (archived per-turn orders + events)
     public List<TurnHistoryEntry> TurnHistory { get; set; } = [];
@@ -28,16 +28,16 @@ public sealed class Game
     public HashSet<string> IdentifiedContactPairs { get; set; } = [];
 
     // Config
-    public bool   AutoRunOnAllSubmitted { get; set; } = false;
-    public string HostPlayerId          { get; set; } = "";
-    public int    MaxTurns              { get; set; } = 9999;
-    public bool   IsFinished            { get; set; }
-    public string? WinnerPlayerId       { get; set; }
-    public string? WinnerName           { get; set; }
-    public string? FinishReason         { get; set; }
+    public bool AutoRunOnAllSubmitted { get; set; } = false;
+    public string HostPlayerId { get; set; } = "";
+    public int MaxTurns { get; set; } = 9999;
+    public bool IsFinished { get; set; }
+    public string? WinnerPlayerId { get; set; }
+    public string? WinnerName { get; set; }
+    public string? FinishReason { get; set; }
 
-    public DateTime CreatedAt           { get; init; } = DateTime.UtcNow;
-    public DateTime? LastTurnRunAt      { get; set; }
+    public DateTime CreatedAt { get; init; } = DateTime.UtcNow;
+    public DateTime? LastTurnRunAt { get; set; }
 
     public Player? GetPlayer(string nameOrId) =>
         Players.Values.FirstOrDefault(p =>

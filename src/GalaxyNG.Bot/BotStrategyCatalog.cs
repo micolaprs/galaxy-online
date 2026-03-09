@@ -21,11 +21,15 @@ public static class BotStrategyCatalog
         {
             var exact = All.FirstOrDefault(s => s.Id.Equals(preferredId, StringComparison.OrdinalIgnoreCase));
             if (exact is not null)
+            {
                 return exact;
+            }
         }
 
         if (All.Count == 0)
+        {
             return Fallback();
+        }
 
         var seedText = $"{gameId}:{raceName}";
         var seed = Math.Abs(StringComparer.OrdinalIgnoreCase.GetHashCode(seedText));
@@ -42,7 +46,9 @@ public static class BotStrategyCatalog
         {
             var baseDir = Path.Combine(AppContext.BaseDirectory, "Prompts", "Strategies");
             if (!Directory.Exists(baseDir))
+            {
                 return [Fallback()];
+            }
 
             var items = new List<BotStrategy>();
             foreach (var file in Directory.GetFiles(baseDir, "*.md", SearchOption.TopDirectoryOnly)
@@ -50,7 +56,9 @@ public static class BotStrategyCatalog
             {
                 var text = File.ReadAllText(file, Encoding.UTF8).Trim();
                 if (string.IsNullOrWhiteSpace(text))
+                {
                     continue;
+                }
 
                 var id = Path.GetFileNameWithoutExtension(file);
                 var name = ExtractTitle(text) ?? ToTitleCase(id);
@@ -81,9 +89,14 @@ public static class BotStrategyCatalog
         {
             var trimmed = line.Trim();
             if (trimmed.StartsWith("# ", StringComparison.Ordinal))
+            {
                 return trimmed[2..].Trim();
+            }
+
             if (!string.IsNullOrWhiteSpace(trimmed))
+            {
                 break;
+            }
         }
 
         return null;
@@ -102,16 +115,23 @@ public static class BotStrategyCatalog
             {
                 var title = line.TrimStart('#', ' ').Trim();
                 if (capture && !title.Equals(heading, StringComparison.OrdinalIgnoreCase))
+                {
                     break;
+                }
+
                 capture = title.Equals(heading, StringComparison.OrdinalIgnoreCase);
                 continue;
             }
 
             if (!capture)
+            {
                 continue;
+            }
 
             if (!string.IsNullOrWhiteSpace(line))
+            {
                 captured.Add(line.TrimStart('-', ' '));
+            }
         }
 
         return captured.Count == 0 ? null : string.Join(" ", captured);

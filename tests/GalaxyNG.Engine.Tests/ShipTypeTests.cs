@@ -58,7 +58,7 @@ public sealed class ShipTypeTests
     public void SpeedLoaded_slower_than_empty()
     {
         var h = new ShipType { Name = "H", Drive = 2, Attacks = 0, Weapons = 0, Shields = 0, Cargo = 1 };
-        double empty  = h.SpeedEmpty(1.0);
+        double empty = h.SpeedEmpty(1.0);
         double loaded = h.SpeedLoaded(1.0, 1.0, 5.0);
         loaded.Should().BeLessThan(empty);
     }

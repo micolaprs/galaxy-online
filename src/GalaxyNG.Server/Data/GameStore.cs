@@ -8,7 +8,7 @@ public sealed class GameStore(ILogger<GameStore> logger)
 {
     private static readonly JsonSerializerOptions JsonOpts = new()
     {
-        WriteIndented        = true,
+        WriteIndented = true,
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
     };
 
@@ -28,25 +28,36 @@ public sealed class GameStore(ILogger<GameStore> logger)
     public async Task<Game?> LoadAsync(string gameId, CancellationToken ct = default)
     {
         var path = GameFile(gameId);
-        if (!File.Exists(path)) return null;
+        if (!File.Exists(path))
+        {
+            return null;
+        }
+
         var json = await File.ReadAllTextAsync(path, ct);
         return JsonSerializer.Deserialize<Game>(json, JsonOpts);
     }
 
     public IEnumerable<string> ListGameIds()
     {
-        if (!Directory.Exists(_basePath)) return [];
+        if (!Directory.Exists(_basePath))
+        {
+            return [];
+        }
+
         return Directory.GetDirectories(_basePath).Select(Path.GetFileName).OfType<string>();
     }
 
     public Task DeleteAllAsync(CancellationToken ct = default)
     {
         if (Directory.Exists(_basePath))
+        {
             Directory.Delete(_basePath, recursive: true);
+        }
+
         logger.LogInformation("Deleted all saved games from {Path}", _basePath);
         return Task.CompletedTask;
     }
 
-    private string GameDir(string id)  => Path.Combine(_basePath, id);
+    private string GameDir(string id) => Path.Combine(_basePath, id);
     private string GameFile(string id) => Path.Combine(GameDir(id), "game.json");
 }

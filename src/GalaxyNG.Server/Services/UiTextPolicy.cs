@@ -7,7 +7,9 @@ internal static partial class UiTextPolicy
     public static string Clean(string? text, int maxLen = 1200)
     {
         if (string.IsNullOrWhiteSpace(text))
+        {
             return string.Empty;
+        }
 
         var cleaned = text.ReplaceLineEndings("\n").Trim();
         cleaned = StripXmlThinkOpenCloseRegex().Replace(cleaned, ""); // remove only tags, keep content
@@ -23,7 +25,9 @@ internal static partial class UiTextPolicy
         cleaned = cleaned.Trim();
 
         if (cleaned.Length > maxLen)
+        {
             cleaned = cleaned[..maxLen].Trim();
+        }
 
         return cleaned;
     }

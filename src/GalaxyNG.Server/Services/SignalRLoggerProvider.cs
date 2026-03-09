@@ -23,7 +23,7 @@ file sealed class SignalRLogger(string category, LogBroadcastService broadcaster
     private static readonly string[] AllowedPrefixes =
     [
         "GalaxyNG.",          // all our own services, controllers, hubs
-        "Bot[",               // bot remote log entries forwarded via /api/logs/ingest
+      "Bot[",               // bot remote log entries forwarded via /api/logs/ingest
     ];
 
     private static string ShortCategory(string cat)
@@ -36,9 +36,18 @@ file sealed class SignalRLogger(string category, LogBroadcastService broadcaster
 
     public bool IsEnabled(LogLevel logLevel)
     {
-        if (logLevel < LogLevel.Information) return false;
+        if (logLevel < LogLevel.Information)
+        {
+            return false;
+        }
+
         foreach (var prefix in AllowedPrefixes)
-            if (category.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)) return true;
+        {
+            if (category.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+        }
         // Always forward warnings/errors regardless of category
         return logLevel >= LogLevel.Warning;
     }
@@ -47,11 +56,16 @@ file sealed class SignalRLogger(string category, LogBroadcastService broadcaster
         LogLevel logLevel, EventId eventId, TState state,
         Exception? exception, Func<TState, Exception?, string> formatter)
     {
-        if (!IsEnabled(logLevel)) return;
+        if (!IsEnabled(logLevel))
+        {
+            return;
+        }
 
         var msg = formatter(state, exception);
         if (exception is not null)
+        {
             msg += $"\n{exception.GetType().Name}: {exception.Message}";
+        }
 
         broadcaster.Broadcast(logLevel.ToString(), ShortCategory(category), msg);
     }

@@ -49,12 +49,17 @@ public sealed class CodexLlmProvider(IConfiguration config, ILogger<CodexLlmProv
         };
         req.Content.Headers.ContentType = new MediaTypeHeaderValue("application/json");
         if (!string.IsNullOrWhiteSpace(_apiKey))
+        {
             req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _apiKey);
+        }
+
         req.Headers.Add("OpenAI-Beta", "responses=experimental");
         req.Headers.Add("originator", "pi");
         req.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("text/event-stream"));
         if (!string.IsNullOrWhiteSpace(_accountId))
+        {
             req.Headers.Add("chatgpt-account-id", _accountId);
+        }
 
         using var response = await _http.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, ct);
         if (!response.IsSuccessStatusCode)
@@ -73,15 +78,21 @@ public sealed class CodexLlmProvider(IConfiguration config, ILogger<CodexLlmProv
         while ((line = await reader.ReadLineAsync(ct)) is not null)
         {
             if (!line.StartsWith("data: ", StringComparison.Ordinal))
+            {
                 continue;
+            }
 
             var data = line[6..].Trim();
             if (string.IsNullOrWhiteSpace(data) || data == "[DONE]")
+            {
                 continue;
+            }
 
             using var doc = JsonDocument.Parse(data);
             if (!doc.RootElement.TryGetProperty("type", out var typeNode))
+            {
                 continue;
+            }
 
             var eventType = typeNode.GetString() ?? "";
             if (eventType == "response.output_text.delta" &&
@@ -100,7 +111,9 @@ public sealed class CodexLlmProvider(IConfiguration config, ILogger<CodexLlmProv
             {
                 var chunk = doneNode.GetString() ?? "";
                 if (!string.IsNullOrWhiteSpace(chunk))
+                {
                     text.Append(chunk);
+                }
             }
         }
 

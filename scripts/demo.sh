@@ -136,7 +136,7 @@ resolve_llm_runtime() {
   BOT_LLM_PROVIDER="$requested"
   BOT_LLM_API="chat-completions"
   BOT_LLM_BASE_URL="http://localhost:1234/v1"
-  BOT_LLM_MODEL="${GALAXYNG_BOT_LLM_MODEL:-qwen/qwen3.5-9b}"
+  BOT_LLM_MODEL="${GALAXYNG_BOT_LLM_MODEL:-qwen/qwen3.5-4b}"
   BOT_LLM_API_KEY="${GALAXYNG_BOT_LLM_API_KEY:-lm-studio}"
   BOT_LLM_ACCOUNT_ID="${GALAXYNG_BOT_LLM_ACCOUNT_ID:-}"
   BOT_LLM_AUTH_DIR=""
@@ -307,7 +307,11 @@ fi
 # Each bot waits STAGGER_SECONDS × its_index before responding to a new turn.
 # Override via env: GALAXYNG_BOT_LLM_TIMEOUT, GALAXYNG_BOT_STAGGER, GALAXYNG_BOT_POLL_INTERVAL
 BOT_LLM_TIMEOUT="${GALAXYNG_BOT_LLM_TIMEOUT:-240}"
-STAGGER_SECONDS="${GALAXYNG_BOT_STAGGER:-70}"
+if [[ "$BOT_LLM_PROVIDER" == "lmstudio" ]]; then
+  STAGGER_SECONDS="${GALAXYNG_BOT_STAGGER:-0}"   # slot queue handles ordering
+else
+  STAGGER_SECONDS="${GALAXYNG_BOT_STAGGER:-70}"
+fi
 BOT_POLL_INTERVAL="${GALAXYNG_BOT_POLL_INTERVAL:-12}"
 info "LLM: timeout=${BOT_LLM_TIMEOUT}с, stagger=${STAGGER_SECONDS}с/бот, poll=${BOT_POLL_INTERVAL}с"
 

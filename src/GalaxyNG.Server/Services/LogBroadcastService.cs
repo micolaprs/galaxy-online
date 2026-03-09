@@ -16,7 +16,11 @@ public sealed class LogBroadcastService
 
     public void Broadcast(string level, string category, string message)
     {
-        if (_hub is null) return;
+        if (_hub is null)
+        {
+            return;
+        }
+
         _ = _hub.Clients.Group("server-logs").SendAsync("LogEntry", new
         {
             level,

@@ -13,8 +13,8 @@ public sealed class LlmClient(HttpClient http, LlmConfig config, ILogger<LlmClie
 {
     private static readonly JsonSerializerOptions JsonOpts = new()
     {
-        PropertyNamingPolicy      = JsonNamingPolicy.CamelCase,
-        DefaultIgnoreCondition    = JsonIgnoreCondition.WhenWritingNull,
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
     };
 
     public async Task<string> CompleteAsync(
@@ -50,9 +50,14 @@ public sealed class LlmClient(HttpClient http, LlmConfig config, ILogger<LlmClie
         var sw = Stopwatch.StartNew();
         string text;
         if (IsOpenAiCodexProvider(config.Provider) && NormalizeApi(config.Api) == "responses")
+        {
             text = await CompleteWithCodexAgenticAsync(messages, tools, toolExecutor, ct);
+        }
         else
+        {
             text = await CompleteWithChatCompletionsAgenticAsync(messages, tools, toolExecutor, ct);
+        }
+
         sw.Stop();
         logger.LogInformation(
             "✅ LLM response ← {Ms}ms, {Chars} chars",
@@ -66,7 +71,9 @@ public sealed class LlmClient(HttpClient http, LlmConfig config, ILogger<LlmClie
         CancellationToken ct)
     {
         if (IsOpenAiCodexProvider(config.Provider) && NormalizeApi(config.Api) == "responses")
+        {
             return await CompleteWithCodexResponsesApiAsync(messages, ct);
+        }
 
         return NormalizeApi(config.Api) switch
         {
@@ -95,13 +102,13 @@ public sealed class LlmClient(HttpClient http, LlmConfig config, ILogger<LlmClie
         {
             var request = new
             {
-                model           = config.Model,
-                messages        = workingMessages,
-                temperature     = config.Temperature,
-                max_tokens      = config.MaxTokens,
+                model = config.Model,
+                messages = workingMessages,
+                temperature = config.Temperature,
+                max_tokens = config.MaxTokens,
                 enable_thinking = false,
-                tools           = toolDefs,
-                tool_choice     = "auto",
+                tools = toolDefs,
+                tool_choice = "auto",
             };
 
             using var response = await http.PostAsJsonAsync("chat/completions", request, JsonOpts, ct);
@@ -125,7 +132,8 @@ public sealed class LlmClient(HttpClient http, LlmConfig config, ILogger<LlmClie
                     content = choice.Message.Content,
                     tool_calls = toolCalls.Select(tc => new
                     {
-                        id = tc.Id, type = "function",
+                        id = tc.Id,
+                        type = "function",
                         function = new { name = tc.Function.Name, arguments = tc.Function.Arguments },
                     }).ToArray(),
                 });
@@ -135,11 +143,16 @@ public sealed class LlmClient(HttpClient http, LlmConfig config, ILogger<LlmClie
                     var toolResult = await toolExecutor(tc.Function.Name, tc.Function.Arguments);
                     workingMessages.Add(new { role = "tool", tool_call_id = tc.Id, content = toolResult });
                 }
+                // Some model templates (e.g. Qwen3 in LM Studio) require the last message to be
+                // a user turn. Add a minimal continuation prompt so the template doesn't error.
+                workingMessages.Add(new { role = "user", content = "(tool results provided above; continue)" });
                 continue;
             }
 
             if (!string.IsNullOrWhiteSpace(choice.Message.Content))
+            {
                 return choice.Message.Content!;
+            }
 
             throw new InvalidOperationException("LLM chat completions agentic returned no text or tool calls.");
         }
@@ -153,11 +166,11 @@ public sealed class LlmClient(HttpClient http, LlmConfig config, ILogger<LlmClie
     {
         var request = new
         {
-            model            = config.Model,
-            messages         = messages.Select(m => new { role = m.Role, content = m.Content }),
-            temperature      = config.Temperature,
-            max_tokens       = config.MaxTokens,
-            enable_thinking  = false,   // suppress <think> blocks (Qwen3/LM Studio)
+            model = config.Model,
+            messages = messages.Select(m => new { role = m.Role, content = m.Content }),
+            temperature = config.Temperature,
+            max_tokens = config.MaxTokens,
+            enable_thinking = false,   // suppress <think> blocks (Qwen3/LM Studio)
         };
 
         using var response = await http.PostAsJsonAsync("chat/completions", request, JsonOpts, ct);
@@ -195,7 +208,9 @@ public sealed class LlmClient(HttpClient http, LlmConfig config, ILogger<LlmClie
         var raw = await response.Content.ReadAsStringAsync(ct);
         using var doc = JsonDocument.Parse(raw);
         if (TryExtractResponseText(doc.RootElement, out var text) && !string.IsNullOrWhiteSpace(text))
+        {
             return text;
+        }
 
         throw new InvalidOperationException($"LLM responses API returned no text. Body: {raw}");
     }
@@ -243,15 +258,22 @@ public sealed class LlmClient(HttpClient http, LlmConfig config, ILogger<LlmClie
         while ((line = await reader.ReadLineAsync(ct)) is not null)
         {
             if (!line.StartsWith("data: ", StringComparison.Ordinal))
+            {
                 continue;
+            }
 
             var data = line[6..].Trim();
             if (string.IsNullOrWhiteSpace(data) || data == "[DONE]")
+            {
                 continue;
+            }
 
             using var doc = JsonDocument.Parse(data);
             if (!doc.RootElement.TryGetProperty("type", out var typeNode))
+            {
                 continue;
+            }
+
             var eventType = typeNode.GetString() ?? "";
             if (eventType == "response.output_text.delta" &&
                 doc.RootElement.TryGetProperty("delta", out var deltaNode))
@@ -269,13 +291,17 @@ public sealed class LlmClient(HttpClient http, LlmConfig config, ILogger<LlmClie
             {
                 var chunk = doneNode.GetString() ?? "";
                 if (!string.IsNullOrWhiteSpace(chunk))
+                {
                     sseText.Append(chunk);
+                }
             }
         }
 
         var result = sseText.ToString().Trim();
         if (!string.IsNullOrWhiteSpace(result))
+        {
             return result;
+        }
 
         throw new InvalidOperationException("LLM codex responses API returned no text.");
     }
@@ -341,15 +367,22 @@ public sealed class LlmClient(HttpClient http, LlmConfig config, ILogger<LlmClie
             while ((line = await reader.ReadLineAsync(ct)) is not null)
             {
                 if (!line.StartsWith("data: ", StringComparison.Ordinal))
+                {
                     continue;
+                }
 
                 var data = line[6..].Trim();
                 if (string.IsNullOrWhiteSpace(data) || data == "[DONE]")
+                {
                     continue;
+                }
 
                 using var doc = JsonDocument.Parse(data);
                 if (!doc.RootElement.TryGetProperty("type", out var typeNode))
+                {
                     continue;
+                }
+
                 var eventType = typeNode.GetString() ?? "";
 
                 if (eventType == "response.output_text.delta" &&
@@ -368,19 +401,23 @@ public sealed class LlmClient(HttpClient http, LlmConfig config, ILogger<LlmClie
                 {
                     var chunk = doneNode.GetString() ?? "";
                     if (!string.IsNullOrWhiteSpace(chunk))
+                    {
                         sseText.Append(chunk);
+                    }
                 }
                 else if (eventType == "response.output_item.done" &&
                     doc.RootElement.TryGetProperty("item", out var itemNode) &&
                     itemNode.TryGetProperty("type", out var itemTypeNode) &&
                     itemTypeNode.GetString() == "function_call")
                 {
-                    var id      = itemNode.TryGetProperty("id",        out var idNode)     ? idNode.GetString()     ?? "" : "";
-                    var callId  = itemNode.TryGetProperty("call_id",   out var callIdNode) ? callIdNode.GetString() ?? "" : "";
-                    var name    = itemNode.TryGetProperty("name",      out var nameNode)   ? nameNode.GetString()   ?? "" : "";
-                    var args    = itemNode.TryGetProperty("arguments", out var argsNode)   ? argsNode.GetString()   ?? "" : "";
+                    var id = itemNode.TryGetProperty("id", out var idNode) ? idNode.GetString() ?? "" : "";
+                    var callId = itemNode.TryGetProperty("call_id", out var callIdNode) ? callIdNode.GetString() ?? "" : "";
+                    var name = itemNode.TryGetProperty("name", out var nameNode) ? nameNode.GetString() ?? "" : "";
+                    var args = itemNode.TryGetProperty("arguments", out var argsNode) ? argsNode.GetString() ?? "" : "";
                     if (!string.IsNullOrWhiteSpace(name))
+                    {
                         functionCalls.Add((id, callId, name, args));
+                    }
                 }
             }
 
@@ -397,7 +434,9 @@ public sealed class LlmClient(HttpClient http, LlmConfig config, ILogger<LlmClie
 
             var result = sseText.ToString().Trim();
             if (!string.IsNullOrWhiteSpace(result))
+            {
                 return result;
+            }
 
             throw new InvalidOperationException("LLM codex agentic responses API returned no text.");
         }
@@ -446,17 +485,24 @@ public sealed class LlmClient(HttpClient http, LlmConfig config, ILogger<LlmClie
         if (root.TryGetProperty("output_text", out var outputText))
         {
             text = outputText.GetString() ?? "";
-            if (!string.IsNullOrWhiteSpace(text)) return true;
+            if (!string.IsNullOrWhiteSpace(text))
+            {
+                return true;
+            }
         }
 
         if (!root.TryGetProperty("output", out var outputArr) || outputArr.ValueKind != JsonValueKind.Array)
+        {
             return false;
+        }
 
         var chunks = new List<string>();
         foreach (var outputItem in outputArr.EnumerateArray())
         {
             if (!outputItem.TryGetProperty("content", out var contentArr) || contentArr.ValueKind != JsonValueKind.Array)
+            {
                 continue;
+            }
 
             foreach (var contentItem in contentArr.EnumerateArray())
             {
@@ -464,7 +510,9 @@ public sealed class LlmClient(HttpClient http, LlmConfig config, ILogger<LlmClie
                 {
                     var v = textNode.GetString();
                     if (!string.IsNullOrWhiteSpace(v))
+                    {
                         chunks.Add(v);
+                    }
                 }
             }
         }
@@ -496,7 +544,7 @@ public sealed record ToolCallRequest(string Name, string CallId, string Argument
 public sealed record ChatMessage(string Role, string Content)
 {
     public static ChatMessage System(string content) => new("system", content);
-    public static ChatMessage User(string content)   => new("user", content);
+    public static ChatMessage User(string content) => new("user", content);
     public static ChatMessage Assistant(string content) => new("assistant", content);
 }
 
@@ -516,18 +564,18 @@ file sealed record ChatCompletionResponseWithTools(
     [property: JsonPropertyName("choices")] List<ChoiceWithTools> Choices
 );
 file sealed record ChoiceWithTools(
-    [property: JsonPropertyName("message")]       MessageWithTools  Message,
-    [property: JsonPropertyName("finish_reason")] string?           FinishReason
+    [property: JsonPropertyName("message")] MessageWithTools Message,
+    [property: JsonPropertyName("finish_reason")] string? FinishReason
 );
 file sealed record MessageWithTools(
-    [property: JsonPropertyName("content")]    string?          Content,
-    [property: JsonPropertyName("tool_calls")] List<ToolCall>?  ToolCalls
+    [property: JsonPropertyName("content")] string? Content,
+    [property: JsonPropertyName("tool_calls")] List<ToolCall>? ToolCalls
 );
 file sealed record ToolCall(
-    [property: JsonPropertyName("id")]       string           Id,
+    [property: JsonPropertyName("id")] string Id,
     [property: JsonPropertyName("function")] ToolCallFunction Function
 );
 file sealed record ToolCallFunction(
-    [property: JsonPropertyName("name")]      string Name,
+    [property: JsonPropertyName("name")] string Name,
     [property: JsonPropertyName("arguments")] string Arguments
 );

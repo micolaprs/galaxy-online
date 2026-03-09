@@ -4,12 +4,12 @@ namespace GalaxyNG.Engine.Models;
 
 public sealed record ShipType
 {
-    public required string Name    { get; init; }
-    public required double Drive   { get; init; }
-    public required int    Attacks { get; init; }
+    public required string Name { get; init; }
+    public required double Drive { get; init; }
+    public required int Attacks { get; init; }
     public required double Weapons { get; init; }
     public required double Shields { get; init; }
-    public required double Cargo   { get; init; }
+    public required double Cargo { get; init; }
 
     // Derived — computed once on creation
     public double Mass => Drive + Weapons + Shields + Cargo
@@ -36,9 +36,9 @@ public sealed record ShipType
     /// <summary>Defense strength at given shields tech and loaded cargo.</summary>
     public double DefenseStrength(double shieldTech, double cargoTech, double cargoQty)
     {
-        double effCargo   = cargoTech == 0 ? 0 : cargoQty / cargoTech;
-        double totalMass  = Mass + effCargo;
-        double cubeRoot   = Math.Cbrt(totalMass / DefenseCubeFactor);
+        double effCargo = cargoTech == 0 ? 0 : cargoQty / cargoTech;
+        double totalMass = Mass + effCargo;
+        double cubeRoot = Math.Cbrt(totalMass / DefenseCubeFactor);
         return cubeRoot == 0 ? 0 : (Shields * shieldTech) / cubeRoot;
     }
 

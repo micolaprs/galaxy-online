@@ -18,7 +18,7 @@
 
 - [.NET 10 SDK](https://dotnet.microsoft.com/download)
 - [Node.js 23](https://nodejs.org/) (через nvm: `nvm use 23`)
-- _(опционально)_ [LM Studio](https://lmstudio.ai/) с моделью `qwen/qwen3-14b` — локальный provider по умолчанию
+- _(опционально)_ [LM Studio](https://lmstudio.ai/) с моделью `qwen/qwen3.5-4b` — локальный provider по умолчанию
 
 ---
 

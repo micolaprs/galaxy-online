@@ -8,17 +8,17 @@ using System.Collections.Concurrent;
 namespace GalaxyNG.Server.Services;
 
 public sealed class GameService(
-    GameStore            store,
-    GalaxyGenerator      generator,
-    TurnProcessor        processor,
-    ReportGenerator      reporter,
-    LlmService           llm,
+    GameStore store,
+    GalaxyGenerator generator,
+    TurnProcessor processor,
+    ReportGenerator reporter,
+    LlmService llm,
     IHubContext<GameHub> hub,
     ILogger<GameService> logger)
 {
     // In-memory cache of active games
     private readonly ConcurrentDictionary<string, Game> _cache = new();
-    private readonly SemaphoreSlim            _lock  = new(1, 1);
+    private readonly SemaphoreSlim _lock = new(1, 1);
 
     // ---- Admin ----
 
@@ -39,7 +39,7 @@ public sealed class GameService(
     public async Task<Game> CreateGameAsync(
         string gameName,
         IReadOnlyList<(string name, string password, bool isBot)> players,
-        GalaxyGeneratorOptions? opts  = null,
+        GalaxyGeneratorOptions? opts = null,
         bool autoRun = false,
         int maxTurns = 9999,
         CancellationToken ct = default)
@@ -51,8 +51,8 @@ public sealed class GameService(
 
         var game = generator.Generate(gameId, gameName, playerSpecs, opts);
         game.AutoRunOnAllSubmitted = autoRun;
-        game.HostPlayerId          = playerSpecs[0].id;
-        game.MaxTurns              = maxTurns;
+        game.HostPlayerId = playerSpecs[0].id;
+        game.MaxTurns = maxTurns;
 
         await _lock.WaitAsync(ct);
         try
@@ -69,16 +69,24 @@ public sealed class GameService(
     public async Task<Game?> GetGameAsync(string gameId, CancellationToken ct = default)
     {
         if (_cache.TryGetValue(gameId, out var cached))
+        {
             return cached;
+        }
 
         await _lock.WaitAsync(ct);
         try
         {
             if (_cache.TryGetValue(gameId, out cached))
+            {
                 return cached;
+            }
 
             var loaded = await store.LoadAsync(gameId, ct);
-            if (loaded is not null) _cache[gameId] = loaded;
+            if (loaded is not null)
+            {
+                _cache[gameId] = loaded;
+            }
+
             return loaded;
         }
         finally { _lock.Release(); }
@@ -90,7 +98,10 @@ public sealed class GameService(
         foreach (var id in store.ListGameIds())
         {
             var g = await GetGameAsync(id, ct);
-            if (g is not null) games.Add(g);
+            if (g is not null)
+            {
+                games.Add(g);
+            }
         }
         return games;
     }
@@ -101,11 +112,21 @@ public sealed class GameService(
         string gameId, string playerName, string password, CancellationToken ct = default)
     {
         var game = await GetGameAsync(gameId, ct);
-        if (game is null) return (false, "Game not found.", null);
+        if (game is null)
+        {
+            return (false, "Game not found.", null);
+        }
 
         var existing = game.GetPlayer(playerName);
-        if (existing is null) return (false, "Race not found. The game creator must add you.", null);
-        if (existing.Password != password) return (false, "Invalid password.", null);
+        if (existing is null)
+        {
+            return (false, "Race not found. The game creator must add you.", null);
+        }
+
+        if (existing.Password != password)
+        {
+            return (false, "Invalid password.", null);
+        }
 
         return (true, null, existing);
     }
@@ -117,20 +138,32 @@ public sealed class GameService(
         string orderText, bool isFinal, CancellationToken ct = default)
     {
         var game = await GetGameAsync(gameId, ct);
-        if (game is null) return (false, "Game not found.");
-        if (game.IsFinished) return (false, "Game already finished.");
+        if (game is null)
+        {
+            return (false, "Game not found.");
+        }
+
+        if (game.IsFinished)
+        {
+            return (false, "Game already finished.");
+        }
 
         var player = game.GetPlayer(raceName);
-        if (player is null || player.Password != password) return (false, "Auth failed.");
+        if (player is null || player.Password != password)
+        {
+            return (false, "Auth failed.");
+        }
 
-        var parser   = new OrderParser();
+        var parser = new OrderParser();
         var (orders, errors) = parser.Parse(orderText);
         if (errors.Count > 0 && errors.Count == orders.Count)
+        {
             return (false, string.Join("; ", errors));
+        }
 
-        player.Orders        = orders;
+        player.Orders = orders;
         player.PendingOrders = orderText;
-        player.Submitted     = isFinal;
+        player.Submitted = isFinal;
 
         await SaveGameAsync(game, ct);
 
@@ -141,18 +174,24 @@ public sealed class GameService(
                 .Select(p => p.Name).ToList();
 
             if (waiting.Count == 0)
+            {
                 logger.LogInformation("✅ [{Race}] подал приказы. Все игроки готовы — запускаем ход {Turn}",
                     raceName, game.Turn);
+            }
             else
+            {
                 logger.LogInformation("✅ [{Race}] подал приказы за ход {Turn}. Ждём: [{Waiting}]",
                     raceName, game.Turn, string.Join(", ", waiting));
+            }
 
             await hub.Clients.Group(gameId)
                 .SendAsync("PlayerSubmitted", new { raceName }, ct);
         }
 
         if (game.AutoRunOnAllSubmitted && game.AllPlayersSubmitted())
+        {
             _ = Task.Run(() => RunTurnAsync(gameId, CancellationToken.None), CancellationToken.None);
+        }
 
         return (true, null);
     }
@@ -166,8 +205,15 @@ public sealed class GameService(
         try
         {
             var game = _cache.GetValueOrDefault(gameId) ?? await store.LoadAsync(gameId, ct);
-            if (game is null) return (false, "Game not found.");
-            if (game.IsFinished) return (false, "Game already finished.");
+            if (game is null)
+            {
+                return (false, "Game not found.");
+            }
+
+            if (game.IsFinished)
+            {
+                return (false, "Game already finished.");
+            }
 
             // Capture orders + reasoning BEFORE the turn processor clears them
             var histEntry = new TurnHistoryEntry
@@ -186,7 +232,7 @@ public sealed class GameService(
             FinalizeGameIfNeeded(game);
 
             // Capture results AFTER the turn
-            histEntry.Battles  = game.Battles
+            histEntry.Battles = game.Battles
                 .Select(b => $"Битва при {b.PlanetName}: {string.Join(" vs ", b.Participants)} → {b.Winner} побеждает")
                 .ToList();
             histEntry.Bombings = game.Bombings
@@ -226,9 +272,17 @@ public sealed class GameService(
         string gameId, string raceName, string password, CancellationToken ct = default)
     {
         var game = await GetGameAsync(gameId, ct);
-        if (game is null) return null;
+        if (game is null)
+        {
+            return null;
+        }
+
         var player = game.GetPlayer(raceName);
-        if (player is null || player.Password != password) return null;
+        if (player is null || player.Password != password)
+        {
+            return null;
+        }
+
         return reporter.GenerateTurnReport(game, player);
     }
 
@@ -238,12 +292,19 @@ public sealed class GameService(
     {
         // Run a clone with only this player's orders to produce a forecast
         var game = await GetGameAsync(gameId, ct);
-        if (game is null) return null;
+        if (game is null)
+        {
+            return null;
+        }
+
         var player = game.GetPlayer(raceName);
-        if (player is null || player.Password != password) return null;
+        if (player is null || player.Password != password)
+        {
+            return null;
+        }
 
         // Deep clone game for simulation
-        var clone       = CloneGame(game);
+        var clone = CloneGame(game);
         var clonePlayer = clone.GetPlayer(player.Id)!;
 
         var (orders, _) = new OrderParser().Parse(orderText);
@@ -259,7 +320,7 @@ public sealed class GameService(
         string gameId, string raceName, string status, string? detail, string? thinking = null,
         CancellationToken ct = default)
     {
-        var safeDetail   = UiTextPolicy.Clean(detail, 220);
+        var safeDetail = UiTextPolicy.Clean(detail, 220);
         var safeThinking = UiTextPolicy.Clean(thinking, 1400);
 
         logger.LogInformation("Bot {Race} status: {Status}{Detail}",
@@ -270,7 +331,9 @@ public sealed class GameService(
         {
             var game = await GetGameAsync(gameId, ct);
             if (game is not null)
+            {
                 game.CurrentTurnReasoning[raceName] = safeThinking;
+            }
         }
 
         await hub.Clients.Group(gameId).SendAsync("BotStatusUpdate", new
@@ -288,10 +351,17 @@ public sealed class GameService(
     public async Task<string?> GenerateGalaxySummaryAsync(string gameId, CancellationToken ct = default)
     {
         var game = await GetGameAsync(gameId, ct);
-        if (game is null) return null;
+        if (game is null)
+        {
+            return null;
+        }
 
         var summary = await llm.GenerateGalaxySummaryAsync(game, ct);
-        if (summary is null) return null;
+        if (summary is null)
+        {
+            return null;
+        }
+
         summary = UiTextPolicy.Clean(summary, 900);
 
         // Remove existing summary for this turn, then add new one
@@ -305,14 +375,28 @@ public sealed class GameService(
         string gameId, string raceName, int turn, CancellationToken ct = default)
     {
         var game = await GetGameAsync(gameId, ct);
-        if (game is null) return null;
+        if (game is null)
+        {
+            return null;
+        }
+
         var hist = game.TurnHistory.FirstOrDefault(h => h.Turn == turn);
-        if (hist is null) return null;
+        if (hist is null)
+        {
+            return null;
+        }
+
         if (hist.PlayerSummaries.TryGetValue(raceName, out var cached) && !string.IsNullOrWhiteSpace(cached))
+        {
             return cached;
+        }
 
         var summary = await llm.GenerateTurnSummaryAsync(game, raceName, turn, ct);
-        if (summary is null) return null;
+        if (summary is null)
+        {
+            return null;
+        }
+
         summary = UiTextPolicy.Clean(summary, 700);
         hist.PlayerSummaries[raceName] = summary;
         await SaveGameAsync(game, ct);
@@ -344,7 +428,9 @@ public sealed class GameService(
     private static void FinalizeGameIfNeeded(Game game)
     {
         if (game.IsFinished)
+        {
             return;
+        }
 
         var active = game.Players.Values.Where(p => !p.IsEliminated).ToList();
         if (active.Count == 1)
@@ -359,7 +445,9 @@ public sealed class GameService(
         }
 
         if (game.Turn < game.MaxTurns)
+        {
             return;
+        }
 
         var scored = game.Players.Values
             .Select(p => new

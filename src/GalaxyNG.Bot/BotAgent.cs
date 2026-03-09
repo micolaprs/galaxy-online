@@ -12,10 +12,10 @@ namespace GalaxyNG.Bot;
 /// LLM bot that plays GalaxyNG through MCP tools exposed by the game server.
 /// </summary>
 public sealed class BotAgent(
-    BotConfig                config,
-    LlmClient                llm,
-    ILoggerFactory           loggerFactory,
-    ILogger<BotAgent>        logger)
+    BotConfig config,
+    LlmClient llm,
+    ILoggerFactory loggerFactory,
+    ILogger<BotAgent> logger)
 {
     private readonly TimeSpan _llmTimeout = TimeSpan.FromSeconds(Math.Clamp(config.LlmTimeoutSeconds, 30, 300));
     private readonly ILoggerFactory _loggerFactory = loggerFactory;
@@ -109,7 +109,10 @@ public sealed class BotAgent(
             if (!string.IsNullOrWhiteSpace(openingOrders))
             {
                 if (!string.IsNullOrWhiteSpace(checkpoint.ContinueMessage))
+                {
                     openingOrders = AppendGlobalMessage(openingOrders, checkpoint.ContinueMessage);
+                }
+
                 logger.LogInformation("🧭 [{Race}] Использую детерминированный opening на ходу {Turn}", config.RaceName, turn);
                 await PostBotStatusAsync("validating", $"ход {turn}, opening-script", ct);
 
@@ -182,7 +185,10 @@ public sealed class BotAgent(
             var extracted = ExtractOrdersFromStructuredOrText(raw, out var usedJson);
             orders = NormalizeOrders(extracted);
             if (!string.IsNullOrWhiteSpace(checkpoint.ContinueMessage))
+            {
                 orders = AppendGlobalMessage(orders, checkpoint.ContinueMessage);
+            }
+
             orders = await AppendDynamicDiplomacyAsync(orders, turn, report, ct);
             orders = CanonicalizeOrdersWithTurnContext(orders, _turnToolContext, out var canonicalFixes);
             orders = EnforceCommandWhitelist(orders, _turnToolContext, out var rewrittenByPreflight, out var droppedByPreflight);
@@ -229,7 +235,9 @@ public sealed class BotAgent(
             _lastValidationErrors = validation;
             logger.LogWarning("⚠️ [{Race}] Ошибка проверки (попытка {Attempt}): {Error}", config.RaceName, attempt, validation);
             if (attempt == 3)
+            {
                 logger.LogError("❌ [{Race}] Отправляю лучший вариант после 3 попыток", config.RaceName);
+            }
         }
 
         if (!haveValidOrders)
@@ -290,8 +298,10 @@ public sealed class BotAgent(
                 }
                 else if (!state.MySubmitted)
                 {
-                    logger.LogWarning("↻ [{Race}] Ход {Turn} не отмечен как submitted, повторяю отправку.",
+                    logger.LogWarning("↻ [{Race}] Ход {Turn} не отмечен как submitted, повтор через 30с.",
                         config.RaceName, state.Turn);
+                    await PostBotStatusAsync("waiting", "повтор через 30с", ct);
+                    await Task.Delay(TimeSpan.FromSeconds(30), ct);
                     await RunTurnAsync(state.Turn, ct);
                 }
                 else
@@ -316,13 +326,17 @@ public sealed class BotAgent(
     private async Task<McpClient> GetMcpClientAsync(CancellationToken ct)
     {
         if (_mcpClient is not null)
+        {
             return _mcpClient;
+        }
 
         await _mcpInitLock.WaitAsync(ct);
         try
         {
             if (_mcpClient is not null)
+            {
                 return _mcpClient;
+            }
 
             var endpoint = new Uri($"{config.ServerUrl.TrimEnd('/')}/mcp");
             var transport = new HttpClientTransport(new HttpClientTransportOptions
@@ -359,7 +373,9 @@ public sealed class BotAgent(
         var payload = text.Trim();
 
         if (result.IsError.GetValueOrDefault(false))
+        {
             throw new InvalidOperationException(string.IsNullOrWhiteSpace(payload) ? $"MCP tool error: {toolName}" : payload);
+        }
 
         return payload;
     }
@@ -419,7 +435,9 @@ public sealed class BotAgent(
         }, ct);
 
         if (text.StartsWith("Error:", StringComparison.OrdinalIgnoreCase))
+        {
             throw new InvalidOperationException($"Orders submit failed via MCP: {text}");
+        }
     }
 
     private async Task<GameStateSnapshot> GetCurrentTurnAsync(CancellationToken ct)
@@ -434,7 +452,9 @@ public sealed class BotAgent(
         using var doc = JsonDocument.Parse(text);
         var root = doc.RootElement;
         if (root.TryGetProperty("error", out var errNode))
+        {
             throw new InvalidOperationException($"MCP get_turn_state failed: {errNode.GetString()}");
+        }
 
         return new GameStateSnapshot(
             Turn: root.GetProperty("turn").GetInt32(),
@@ -473,14 +493,18 @@ public sealed class BotAgent(
         usedJson = false;
         var json = TryExtractJsonObject(llmResponse);
         if (string.IsNullOrWhiteSpace(json))
+        {
             return "";
+        }
 
         try
         {
             using var doc = JsonDocument.Parse(json);
             var root = doc.RootElement;
             if (!root.TryGetProperty("commands", out var commands) || commands.ValueKind != JsonValueKind.Array)
+            {
                 return "";
+            }
 
             var lines = new List<string>();
             foreach (var cmd in commands.EnumerateArray())
@@ -489,18 +513,28 @@ public sealed class BotAgent(
                 {
                     var line = cmd.GetString()?.Trim();
                     if (!string.IsNullOrWhiteSpace(line))
+                    {
                         lines.Add(line);
+                    }
+
                     continue;
                 }
 
                 if (cmd.ValueKind != JsonValueKind.Object)
+                {
                     continue;
+                }
+
                 if (!cmd.TryGetProperty("cmd", out var codeNode) || codeNode.ValueKind != JsonValueKind.String)
+                {
                     continue;
+                }
 
                 var code = codeNode.GetString()?.Trim();
                 if (string.IsNullOrWhiteSpace(code))
+                {
                     continue;
+                }
 
                 var args = new List<string>();
                 if (cmd.TryGetProperty("args", out var argsNode) && argsNode.ValueKind == JsonValueKind.Array)
@@ -511,7 +545,9 @@ public sealed class BotAgent(
                         {
                             var s = a.GetString();
                             if (!string.IsNullOrWhiteSpace(s))
+                            {
                                 args.Add(s.Trim());
+                            }
                         }
                         else if (a.ValueKind == JsonValueKind.Number && a.TryGetInt32(out var n))
                         {
@@ -537,7 +573,9 @@ public sealed class BotAgent(
     {
         var text = rawOrders.ReplaceLineEndings("\n").Trim();
         if (string.IsNullOrWhiteSpace(text))
+        {
             return "";
+        }
 
         var normalized = new List<string>();
         bool inMessage = false;
@@ -561,7 +599,9 @@ public sealed class BotAgent(
 
             var line = raw.Split(';')[0].Trim();
             if (string.IsNullOrWhiteSpace(line))
+            {
                 continue;
+            }
 
             if (line.StartsWith("@"))
             {
@@ -572,7 +612,9 @@ public sealed class BotAgent(
 
             var cmdLine = NormalizeCompactDesignOrder(NormalizeCompactGroupCommand(line));
             if (IsLikelyOrderLine(cmdLine))
+            {
                 normalized.Add(cmdLine);
+            }
         }
 
         return string.Join("\n", normalized).Trim();
@@ -581,7 +623,10 @@ public sealed class BotAgent(
     private static bool IsLikelyOrderLine(string line)
     {
         if (string.IsNullOrWhiteSpace(line))
+        {
             return false;
+        }
+
         var c = char.ToLowerInvariant(line.TrimStart()[0]);
         return "cyn=qnprvmdtesilugbxhjawfo@".Contains(c);
     }
@@ -591,7 +636,10 @@ public sealed class BotAgent(
         // Convert compact group commands like "l2 COL" => "l 2 COL"
         var m = Regex.Match(line, @"^(?<cmd>[silugbxh])(?<num>\d+)(?<tail>\s+.*)?$", RegexOptions.IgnoreCase);
         if (!m.Success)
+        {
             return line;
+        }
+
         var cmd = m.Groups["cmd"].Value;
         var num = m.Groups["num"].Value;
         var tail = m.Groups["tail"].Success ? m.Groups["tail"].Value : "";
@@ -603,19 +651,23 @@ public sealed class BotAgent(
         // Convert compact form like "d Scout11000" => "d Scout 1 1 0 0 0"
         var parts = line.Split(' ', StringSplitOptions.RemoveEmptyEntries);
         if (parts.Length != 2 || !parts[0].Equals("d", StringComparison.OrdinalIgnoreCase))
+        {
             return line;
+        }
 
         var m = Regex.Match(parts[1], @"^(?<name>[A-Za-z][A-Za-z0-9_-]*?)(?<stats>\d{5,})$");
         if (!m.Success)
+        {
             return line;
+        }
 
         var stats = m.Groups["stats"].Value;
-        var name  = m.Groups["name"].Value;
-        var drive   = stats[0].ToString();
+        var name = m.Groups["name"].Value;
+        var drive = stats[0].ToString();
         var attacks = stats[1].ToString();
         var weapons = stats[2].ToString();
         var shields = stats[3].ToString();
-        var cargo   = stats[4..]; // cargo can be multi-digit
+        var cargo = stats[4..]; // cargo can be multi-digit
 
         return $"d {name} {drive} {attacks} {weapons} {shields} {cargo}";
     }
@@ -646,23 +698,33 @@ public sealed class BotAgent(
     {
         var myPlanets = ParseMyPlanets(report);
         if (myPlanets.Count == 0)
+        {
             return "";
+        }
 
         var home = myPlanets[0];
         var groups = ParseGroupNumbers(report);
         var target = FindNearestTargetPlanetFromReport(home.Name, report);
 
         var lines = new List<string> { "o AUTOUNLOAD" };
-        var hasHaulerDesign  = ReportMentionsShipType(report, "Hauler");
-        var hasScoutDesign   = ReportMentionsShipType(report, "Scout");
+        var hasHaulerDesign = ReportMentionsShipType(report, "Hauler");
+        var hasScoutDesign = ReportMentionsShipType(report, "Scout");
         var hasFighterDesign = ReportMentionsShipType(report, "Fighter");
 
         if (!hasScoutDesign)
+        {
             lines.Add("d Scout 1 0 0 0 0");
+        }
+
         if (!hasHaulerDesign)
+        {
             lines.Add("d Hauler 1 0 0 0 2");
+        }
+
         if (!hasFighterDesign)
+        {
             lines.Add("d Fighter 2 2 2 1 0");
+        }
 
         // Turn 0: start with Haulers to expand quickly
         // Turn 1+: switch to Fighters to build military
@@ -681,7 +743,9 @@ public sealed class BotAgent(
 
         // Turn 0: send any starting group toward nearest planet
         if (turn == 0 && groups.Count > 0 && !string.IsNullOrWhiteSpace(target))
+        {
             lines.Add($"s {groups[0]} {target}");
+        }
 
         // Turn 1+: load colonists and send Haulers to expand
         if (turn >= 1 && groups.Count > 0 && !string.IsNullOrWhiteSpace(target))
@@ -694,7 +758,9 @@ public sealed class BotAgent(
 
         // Turn 2+: send second group (likely a Fighter) forward
         if (turn >= 2 && groups.Count > 1 && !string.IsNullOrWhiteSpace(target))
+        {
             lines.Add($"s {groups[1]} {target}");
+        }
 
         return await AppendDynamicDiplomacyAsync(string.Join('\n', lines), turn, report, ct);
     }
@@ -705,18 +771,24 @@ public sealed class BotAgent(
         {
             var planets = ParseScoutedPlanetSnapshots(report);
             if (planets.Count == 0)
+            {
                 return null;
+            }
 
             var home = planets.FirstOrDefault(p => p.Name.Equals(homePlanet, StringComparison.OrdinalIgnoreCase));
             if (home is null)
+            {
                 return planets.FirstOrDefault()?.Name;
+            }
 
             var preferred = planets
                 .Where(p => !p.Name.Equals(home.Name, StringComparison.OrdinalIgnoreCase) && p.IsUninhabited)
                 .OrderBy(p => Distance(home, p))
                 .FirstOrDefault();
             if (preferred is not null)
+            {
                 return preferred.Name;
+            }
 
             return planets
                 .Where(p => !p.Name.Equals(home.Name, StringComparison.OrdinalIgnoreCase))
@@ -759,12 +831,18 @@ public sealed class BotAgent(
             {
                 if (string.IsNullOrWhiteSpace(line) || line.TrimStart().StartsWith("YOUR ") || line.TrimStart().StartsWith("==="))
                 {
-                    if (names.Count > 0) break;
+                    if (names.Count > 0)
+                    {
+                        break;
+                    }
+
                     continue;
                 }
                 var parts = line.Split(' ', StringSplitOptions.RemoveEmptyEntries);
                 if (parts.Length >= 2 && int.TryParse(parts[1], out _))
+                {
                     names.Add(parts[0]);
+                }
             }
         }
         return names;
@@ -786,18 +864,31 @@ public sealed class BotAgent(
             }
 
             if (inSection && line.StartsWith("="))
+            {
                 break;
+            }
 
             if (!inSection || string.IsNullOrWhiteSpace(line) || line.StartsWith("Name", StringComparison.OrdinalIgnoreCase))
+            {
                 continue;
+            }
 
             var parts = Regex.Split(line.Trim(), @"\s+");
             if (parts.Length < 3)
+            {
                 continue;
+            }
+
             if (!double.TryParse(parts[1], NumberStyles.Any, CultureInfo.InvariantCulture, out var x))
+            {
                 continue;
+            }
+
             if (!double.TryParse(parts[2], NumberStyles.Any, CultureInfo.InvariantCulture, out var y))
+            {
                 continue;
+            }
+
             result.Add((parts[0], x, y));
         }
 
@@ -809,9 +900,11 @@ public sealed class BotAgent(
         var snapshots = new Dictionary<string, PlanetSnapshot>(StringComparer.OrdinalIgnoreCase);
 
         foreach (var p in ParseMyPlanets(report))
+        {
             snapshots[p.Name] = new PlanetSnapshot(
                 Name: p.Name, X: p.X, Y: p.Y,
                 OwnerKnown: true, IsUninhabited: false, IsAlien: false, OwnerRace: null);
+        }
 
         var lines = report.ReplaceLineEndings("\n").Split('\n');
         var inAlien = false;
@@ -843,7 +936,9 @@ public sealed class BotAgent(
                 continue;
             }
             if (string.IsNullOrWhiteSpace(line))
+            {
                 continue;
+            }
 
             if (inAlien)
             {
@@ -851,11 +946,15 @@ public sealed class BotAgent(
                     @"^(?<name>\S+)\s+\((?<owner>[^)]+)\)\s+X:(?<x>-?\d+(?:\.\d+)?)\s+Y:(?<y>-?\d+(?:\.\d+)?)\b",
                     RegexOptions.IgnoreCase);
                 if (!mAlien.Success)
+                {
                     continue;
+                }
 
                 if (!double.TryParse(mAlien.Groups["x"].Value, NumberStyles.Any, CultureInfo.InvariantCulture, out var ax) ||
                     !double.TryParse(mAlien.Groups["y"].Value, NumberStyles.Any, CultureInfo.InvariantCulture, out var ay))
+                {
                     continue;
+                }
 
                 var alienName = mAlien.Groups["name"].Value;
                 var owner = mAlien.Groups["owner"].Value.Trim();
@@ -866,15 +965,21 @@ public sealed class BotAgent(
             }
 
             if (!inUninhabited && !inSection)
+            {
                 continue;
+            }
 
             var m = Regex.Match(line, @"^(?<name>\S+)\s+X:(?<x>-?\d+(?:\.\d+)?)\s+Y:(?<y>-?\d+(?:\.\d+)?)\b", RegexOptions.IgnoreCase);
             if (!m.Success)
+            {
                 continue;
+            }
 
             if (!double.TryParse(m.Groups["x"].Value, NumberStyles.Any, CultureInfo.InvariantCulture, out var x) ||
                 !double.TryParse(m.Groups["y"].Value, NumberStyles.Any, CultureInfo.InvariantCulture, out var y))
+            {
                 continue;
+            }
 
             var name = m.Groups["name"].Value;
             snapshots[name] = new PlanetSnapshot(
@@ -902,27 +1007,41 @@ public sealed class BotAgent(
             }
 
             if (inStatus && line.StartsWith("="))
+            {
                 break;
+            }
+
             if (!inStatus || string.IsNullOrWhiteSpace(line))
+            {
                 continue;
+            }
+
             if (line.StartsWith("Race", StringComparison.OrdinalIgnoreCase) || line.StartsWith("-", StringComparison.Ordinal))
+            {
                 continue;
+            }
 
             var m = Regex.Match(line.Trim(),
                 @"^(?<race>.+?)\s+(?<drive>-?\d+(?:\.\d+)?)\s+(?<wpn>-?\d+(?:\.\d+)?)\s+(?<shd>-?\d+(?:\.\d+)?)\s+(?<cargo>-?\d+(?:\.\d+)?)\s+(?<pops>-?\d+(?:\.\d+)?)\s+(?<ind>-?\d+(?:\.\d+)?)\s+(?<plnts>-?\d+)\s*$");
             if (!m.Success)
+            {
                 continue;
+            }
 
             var race = Regex.Replace(m.Groups["race"].Value, @"\s*\[[^\]]+\]\s*", " ").Trim();
             if (string.IsNullOrWhiteSpace(race))
+            {
                 continue;
+            }
 
             if (!double.TryParse(m.Groups["drive"].Value, NumberStyles.Any, CultureInfo.InvariantCulture, out var drive) ||
                 !double.TryParse(m.Groups["wpn"].Value, NumberStyles.Any, CultureInfo.InvariantCulture, out var wpn) ||
                 !double.TryParse(m.Groups["shd"].Value, NumberStyles.Any, CultureInfo.InvariantCulture, out var shd) ||
                 !double.TryParse(m.Groups["cargo"].Value, NumberStyles.Any, CultureInfo.InvariantCulture, out var cargo) ||
                 !int.TryParse(m.Groups["plnts"].Value, NumberStyles.Any, CultureInfo.InvariantCulture, out var plnts))
+            {
                 continue;
+            }
 
             rows.Add(new StatusRow(
                 Name: race,
@@ -950,16 +1069,25 @@ public sealed class BotAgent(
             }
 
             if (inSection && line.StartsWith("="))
+            {
                 break;
+            }
 
             if (!inSection || string.IsNullOrWhiteSpace(line) || line.StartsWith("#", StringComparison.OrdinalIgnoreCase))
+            {
                 continue;
+            }
 
             var parts = Regex.Split(line.Trim(), @"\s+");
             if (parts.Length == 0)
+            {
                 continue;
+            }
+
             if (int.TryParse(parts[0], NumberStyles.Any, CultureInfo.InvariantCulture, out var num))
+            {
                 result.Add(num);
+            }
         }
 
         return result;
@@ -968,7 +1096,9 @@ public sealed class BotAgent(
     private async Task<CheckpointDecision> EvaluateCheckpointDecisionAsync(int turn, string report, CancellationToken ct)
     {
         if (turn < 30 || turn % 5 != 0)
+        {
             return CheckpointDecision.None;
+        }
 
         try
         {
@@ -982,11 +1112,15 @@ public sealed class BotAgent(
 
             var me = players.FirstOrDefault(p => p.Name.Equals(config.RaceName, StringComparison.OrdinalIgnoreCase));
             if (me is null)
+            {
                 return CheckpointDecision.None;
+            }
 
             var active = players.Where(p => !p.IsEliminated).ToList();
             if (active.Count <= 1)
+            {
                 return CheckpointDecision.None;
+            }
 
             double Score(PlayerCheckpointStat p) => p.PlanetCount * 100 + p.TechPower * 25;
 
@@ -1041,13 +1175,20 @@ public sealed class BotAgent(
             }
 
             if (inStatus && line.StartsWith("="))
+            {
                 break;
+            }
+
             if (!inStatus || line.Length == 0 || line.StartsWith("Race") || line.StartsWith("-"))
+            {
                 continue;
+            }
 
             var m = Regex.Match(line, @"^(?<race>[^\[]+)\[ALLY");
             if (m.Success)
+            {
                 allies.Add(m.Groups["race"].Value.Trim());
+            }
         }
 
         return allies;
@@ -1066,7 +1207,10 @@ public sealed class BotAgent(
         RememberDiplomaticMessage(checkpoint.ContinueMessage, isSurrender: true);
 
         if (!string.IsNullOrWhiteSpace(checkpoint.AllyName))
+        {
             lines.Add($"a {checkpoint.AllyName}");
+        }
+
         lines.Add($"q {checkpoint.AllyName ?? "RETIRE"}");
         return string.Join('\n', lines);
     }
@@ -1074,24 +1218,34 @@ public sealed class BotAgent(
     private static string AppendGlobalMessage(string orders, string message)
     {
         if (string.IsNullOrWhiteSpace(message))
+        {
             return orders;
+        }
 
         var text = orders.Trim();
         var payload = $"@ ALL\n{message}\n@";
         if (text.Contains(payload, StringComparison.Ordinal))
+        {
             return text;
+        }
+
         return string.IsNullOrWhiteSpace(text) ? payload : $"{text}\n{payload}";
     }
 
     private static string AppendPrivateMessage(string orders, string targetRace, string message)
     {
         if (string.IsNullOrWhiteSpace(targetRace) || string.IsNullOrWhiteSpace(message))
+        {
             return orders;
+        }
 
         var text = orders.Trim();
         var payload = $"@ {targetRace}\n{message}\n@";
         if (text.Contains(payload, StringComparison.Ordinal))
+        {
             return text;
+        }
+
         return string.IsNullOrWhiteSpace(text) ? payload : $"{text}\n{payload}";
     }
 
@@ -1100,7 +1254,9 @@ public sealed class BotAgent(
         var result = orders;
         var context = await GetDiplomacyContextAsync(ct);
         if (context is null)
+        {
             return result;
+        }
 
         if (turn > 0 && turn % 4 == 0)
         {
@@ -1122,7 +1278,9 @@ public sealed class BotAgent(
 
             var signal = context.Signals.GetValueOrDefault(target);
             if (signal is not null && signal.UnansweredMineStreak >= 3 && signal.LastTurn is int lastTurn && turn - lastTurn < 8)
+            {
                 return result;
+            }
 
             var intent = signal is not null && signal.UnansweredMineStreak > 0
                 ? $"Личное сообщение для расы {target}: собеседник молчит уже {signal.UnansweredMineStreak} сообщений подряд. " +
@@ -1138,7 +1296,9 @@ public sealed class BotAgent(
             if (!allies.Contains(target, StringComparer.OrdinalIgnoreCase) &&
                 turn % 6 == 0 &&
                 (signal is null || signal.UnansweredMineStreak < 3))
+            {
                 result = $"{result}\na {target} {turn + 8}";
+            }
         }
 
         return result;
@@ -1164,7 +1324,9 @@ public sealed class BotAgent(
             using var doc = JsonDocument.Parse(json);
             if (!doc.RootElement.TryGetProperty("contacts", out var contactsNode) ||
                 contactsNode.ValueKind != JsonValueKind.Array)
+            {
                 return BuildFallbackDiplomacyContext();
+            }
 
             var contacts = new List<string>();
             var signals = new Dictionary<string, PrivateDiplomacySignal>(StringComparer.OrdinalIgnoreCase);
@@ -1174,7 +1336,9 @@ public sealed class BotAgent(
                     ? raceProp.GetString()?.Trim()
                     : null;
                 if (string.IsNullOrWhiteSpace(race))
+                {
                     continue;
+                }
 
                 var channelOpen = node.TryGetProperty("channelOpen", out var openProp) && openProp.ValueKind == JsonValueKind.True;
                 var myMessages = node.TryGetProperty("myMessages", out var myMsgProp) && myMsgProp.TryGetInt32(out var myMsgVal) ? myMsgVal : 0;
@@ -1203,7 +1367,9 @@ public sealed class BotAgent(
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .ToList();
             if (openedContacts.Count == 0)
+            {
                 return BuildFallbackDiplomacyContext();
+            }
 
             return new DiplomacyContext(openedContacts, signals);
         }
@@ -1230,15 +1396,24 @@ public sealed class BotAgent(
     private static int ScoreDiplomaticTarget(PrivateDiplomacySignal? signal, int turn)
     {
         if (signal is null)
+        {
             return 5;
+        }
 
         var score = 0;
-        if (signal.ChannelOpen) score += 20;
+        if (signal.ChannelOpen)
+        {
+            score += 20;
+        }
+
         score += Math.Min(12, signal.TheirMessages * 2);
         score -= Math.Min(15, signal.MyMessages);
         score -= signal.UnansweredMineStreak * 12;
         if (signal.LastSender is not null && signal.LastSender.Equals(signal.Race, StringComparison.OrdinalIgnoreCase))
+        {
             score += 10;
+        }
+
         if (signal.LastTurn is int t)
         {
             var age = Math.Max(0, turn - t);
@@ -1250,7 +1425,9 @@ public sealed class BotAgent(
     private async Task EnsureCommanderProfileAsync(CancellationToken ct)
     {
         if (_commander is not null)
+        {
             return;
+        }
 
         try
         {
@@ -1341,13 +1518,20 @@ public sealed class BotAgent(
 
         var message = response.ReplaceLineEndings(" ").Trim();
         if (string.IsNullOrWhiteSpace(message))
+        {
             message = $"{profile.SignaturePhrase} Раса {config.RaceName} продолжает текущий курс.";
+        }
+
         message = message.Replace(';', ',');
         if (message.Length > 220)
         {
             message = message[..220];
             var cut = message.LastIndexOf(' ');
-            if (cut > 80) message = message[..cut];
+            if (cut > 80)
+            {
+                message = message[..cut];
+            }
+
             message = message.TrimEnd(',', '.', ' ') + ".";
         }
 
@@ -1360,7 +1544,9 @@ public sealed class BotAgent(
         var effectiveTurn = turn > 0 ? turn : (_myDiplomaticHistory.LastOrDefault()?.Turn ?? 0);
         _myDiplomaticHistory.Add(new DiplomaticMemoryEntry(effectiveTurn, text, isSurrender));
         if (_myDiplomaticHistory.Count > 30)
+        {
             _myDiplomaticHistory.RemoveRange(0, _myDiplomaticHistory.Count - 30);
+        }
     }
 
     private static string? TryExtractJsonObject(string text)
@@ -1368,7 +1554,10 @@ public sealed class BotAgent(
         var start = text.IndexOf('{');
         var end = text.LastIndexOf('}');
         if (start < 0 || end <= start)
+        {
             return null;
+        }
+
         return text[start..(end + 1)];
     }
 
@@ -1394,7 +1583,9 @@ public sealed class BotAgent(
         {
             var ctx = _turnToolContext;
             if (ctx is null)
+            {
                 return """{"error":"turn context is not initialized"}""";
+            }
 
             var payload = JsonSerializer.Serialize(new
             {
@@ -1440,8 +1631,12 @@ public sealed class BotAgent(
 
         var allowedProduction = new List<string> { "CAP", "MAT", "DRIVE", "WEAPONS", "SHIELDS", "CARGO" };
         foreach (var ship in designedShips)
+        {
             if (!allowedProduction.Contains(ship, StringComparer.OrdinalIgnoreCase))
+            {
                 allowedProduction.Add(ship);
+            }
+        }
 
         return new TurnToolContext(
             Turn: turn,
@@ -1460,7 +1655,9 @@ public sealed class BotAgent(
         {
             var line = raw.Trim();
             if (string.IsNullOrWhiteSpace(line))
+            {
                 continue;
+            }
 
             if (line.StartsWith("= "))
             {
@@ -1468,17 +1665,28 @@ public sealed class BotAgent(
                 continue;
             }
             if (line.StartsWith("#") || line.StartsWith("Name", StringComparison.OrdinalIgnoreCase))
+            {
                 continue;
+            }
 
             if (section.Contains("YOUR PLANETS", StringComparison.Ordinal))
             {
                 var parts = Regex.Split(line, @"\s+");
                 if (parts.Length < 3)
+                {
                     continue;
+                }
+
                 if (!double.TryParse(parts[1], NumberStyles.Any, CultureInfo.InvariantCulture, out _))
+                {
                     continue;
+                }
+
                 if (!double.TryParse(parts[2], NumberStyles.Any, CultureInfo.InvariantCulture, out _))
+                {
                     continue;
+                }
+
                 result.Add(parts[0]);
                 continue;
             }
@@ -1488,7 +1696,9 @@ public sealed class BotAgent(
             {
                 var parts = Regex.Split(line, @"\s+");
                 if (parts.Length > 0)
+                {
                     result.Add(parts[0]);
+                }
             }
         }
 
@@ -1498,7 +1708,9 @@ public sealed class BotAgent(
     private static string BuildDynamicTokenHint(TurnToolContext? ctx)
     {
         if (ctx is null)
+        {
             return "If uncertain, call get_turn_context and validate_orders tools before finalizing orders.";
+        }
 
         var planets = ctx.KnownPlanetNames.Count == 0
             ? "(none)"
@@ -1567,32 +1779,49 @@ public sealed class BotAgent(
         {
             var parts = line.Trim().Split(' ', StringSplitOptions.RemoveEmptyEntries);
             if (parts.Length == 0)
+            {
                 continue;
+            }
+
             var cmd = parts[0].ToLowerInvariant();
 
             if (cmd == "p" && parts.Length >= 3)
             {
                 if (!allowedPlanets.Contains(parts[1]))
+                {
                     problems.Add($"unknown planet in p: {parts[1]} (try: {SuggestToken(parts[1], ctx.KnownPlanetNames)})");
+                }
+
                 if (!allowedProd.Contains(parts[2]))
+                {
                     problems.Add($"unknown production type in p: {parts[2]} (try: {SuggestToken(parts[2], ctx.AllowedProductionTypes)})");
+                }
             }
             else if (cmd == "s" && parts.Length >= 3)
             {
                 if (!int.TryParse(parts[1], out var g) || (allowedGroups.Count > 0 && !allowedGroups.Contains(g)))
+                {
                     problems.Add($"unknown group in s: {parts[1]}");
+                }
             }
             else if (cmd == "l" && parts.Length >= 3)
             {
                 if (!int.TryParse(parts[1], out var g) || (allowedGroups.Count > 0 && !allowedGroups.Contains(g)))
+                {
                     problems.Add($"unknown group in l: {parts[1]}");
+                }
+
                 if (!localCargo.Contains(parts[2]))
+                {
                     problems.Add($"unknown cargo in l: {parts[2]} (try: {SuggestToken(parts[2], localCargo.ToList())})");
+                }
             }
             else if (cmd == "r" && parts.Length >= 4)
             {
                 if (!allowedCargo.Contains(parts[2]))
+                {
                     problems.Add($"unknown route cargo: {parts[2]} (try: {SuggestToken(parts[2], ctx.AllowedCargoTypes)})");
+                }
             }
         }
 
@@ -1611,7 +1840,9 @@ public sealed class BotAgent(
         rewritten = 0;
         dropped = 0;
         if (ctx is null || string.IsNullOrWhiteSpace(orders))
+        {
             return orders;
+        }
 
         var allowedGroups = new HashSet<int>(ctx.GroupNumbers);
         var outLines = new List<string>();
@@ -1627,7 +1858,10 @@ public sealed class BotAgent(
 
             var parts = line.Split(' ', StringSplitOptions.RemoveEmptyEntries).ToList();
             if (parts.Count == 0)
+            {
                 continue;
+            }
+
             var cmd = parts[0].ToLowerInvariant();
             var original = string.Join(' ', parts);
 
@@ -1664,7 +1898,10 @@ public sealed class BotAgent(
 
             var rewrittenLine = string.Join(' ', parts);
             if (!rewrittenLine.Equals(original, StringComparison.Ordinal))
+            {
                 rewritten++;
+            }
+
             outLines.Add(rewrittenLine);
         }
 
@@ -1673,10 +1910,17 @@ public sealed class BotAgent(
 
     private static string SuggestToken(string token, IReadOnlyList<string> allowed)
     {
-        if (allowed.Count == 0) return "(none)";
+        if (allowed.Count == 0)
+        {
+            return "(none)";
+        }
+
         var canonical = CanonicalizeToken(token, allowed);
         if (allowed.Contains(canonical, StringComparer.OrdinalIgnoreCase))
+        {
             return canonical;
+        }
+
         return allowed[0];
     }
 
@@ -1684,7 +1928,9 @@ public sealed class BotAgent(
     {
         fixes = 0;
         if (ctx is null || string.IsNullOrWhiteSpace(orders))
+        {
             return orders;
+        }
 
         var lines = new List<string>();
         bool inMessage = false;
@@ -1692,12 +1938,18 @@ public sealed class BotAgent(
         {
             var line = rawLine.Trim();
             if (string.IsNullOrWhiteSpace(line))
+            {
                 continue;
+            }
+
             if (inMessage)
             {
                 lines.Add(rawLine);
                 if (line.StartsWith("@"))
+                {
                     inMessage = false;
+                }
+
                 continue;
             }
             if (line.StartsWith("@"))
@@ -1709,7 +1961,9 @@ public sealed class BotAgent(
 
             var parts = line.Split(' ', StringSplitOptions.RemoveEmptyEntries).ToList();
             if (parts.Count == 0)
+            {
                 continue;
+            }
 
             var cmd = parts[0].ToLowerInvariant();
             if (cmd == "p" && parts.Count >= 3)
@@ -1740,11 +1994,17 @@ public sealed class BotAgent(
     private static int CanonicalizeTokenInPlace(List<string> tokens, int index, IReadOnlyList<string> allowed)
     {
         if (index >= tokens.Count || allowed.Count == 0)
+        {
             return 0;
+        }
+
         var original = tokens[index];
         var canonical = CanonicalizeToken(original, allowed);
         if (canonical.Equals(original, StringComparison.Ordinal))
+        {
             return 0;
+        }
+
         tokens[index] = canonical;
         return 1;
     }
@@ -1752,20 +2012,28 @@ public sealed class BotAgent(
     private static string CanonicalizeToken(string token, IReadOnlyList<string> allowed)
     {
         if (string.IsNullOrWhiteSpace(token))
+        {
             return token;
+        }
 
         // Exact match first.
         var exact = allowed.FirstOrDefault(a => a.Equals(token, StringComparison.OrdinalIgnoreCase));
         if (!string.IsNullOrWhiteSpace(exact))
+        {
             return exact;
+        }
 
         var normalized = NormalizeToken(token);
         if (string.IsNullOrWhiteSpace(normalized))
+        {
             return token;
+        }
 
         var exactNormalized = allowed.FirstOrDefault(a => NormalizeToken(a).Equals(normalized, StringComparison.OrdinalIgnoreCase));
         if (!string.IsNullOrWhiteSpace(exactNormalized))
+        {
             return exactNormalized;
+        }
 
         // Strip common suffix noise (e.g. FighterP, FighterS1, P11s2).
         var stripped = Regex.Replace(normalized, @"(S\d+|L\d+|P)$", "", RegexOptions.IgnoreCase);
@@ -1775,7 +2043,9 @@ public sealed class BotAgent(
                 NormalizeToken(a).Equals(stripped, StringComparison.OrdinalIgnoreCase)
                 || stripped.StartsWith(NormalizeToken(a), StringComparison.OrdinalIgnoreCase));
             if (!string.IsNullOrWhiteSpace(strippedMatch))
+            {
                 return strippedMatch;
+            }
         }
 
         // Prefix repair: FIGHTERP -> Fighter, WEAPONSP -> WEAPONS, COLS3 -> COL.
@@ -1790,7 +2060,9 @@ public sealed class BotAgent(
             .ThenBy(a => a.Length)
             .ToList();
         if (prefixMatches.Count > 0)
+        {
             return prefixMatches[0];
+        }
 
         // Fallback: allow planets like P11s2 to map to P11 by alnum-prefix.
         var alphaNumPrefix = Regex.Match(normalized, @"^[A-Z]+\d+", RegexOptions.IgnoreCase).Value;
@@ -1798,7 +2070,9 @@ public sealed class BotAgent(
         {
             var pref = allowed.FirstOrDefault(a => NormalizeToken(a).Equals(alphaNumPrefix, StringComparison.OrdinalIgnoreCase));
             if (!string.IsNullOrWhiteSpace(pref))
+            {
                 return pref;
+            }
         }
 
         return token;
@@ -1814,17 +2088,91 @@ public sealed class BotAgent(
         IReadOnlyList<ToolDefinition>? tools = null,
         Func<string, string, Task<string>>? toolExecutor = null)
     {
-        using var llmTimeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        llmTimeoutCts.CancelAfter(_llmTimeout);
+        if (config.Llm.Serialized)
+        {
+            await AcquireLlmSlotAsync(context, ct);
+        }
+
         try
         {
-            if (tools is not null && toolExecutor is not null)
-                return await llm.CompleteAsync(messages, tools, toolExecutor, llmTimeoutCts.Token);
-            return await llm.CompleteAsync(messages, llmTimeoutCts.Token);
+            using var llmTimeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            llmTimeoutCts.CancelAfter(_llmTimeout);
+            try
+            {
+                if (tools is not null && toolExecutor is not null)
+                {
+                    return await llm.CompleteAsync(messages, tools, toolExecutor, llmTimeoutCts.Token);
+                }
+
+                return await llm.CompleteAsync(messages, llmTimeoutCts.Token);
+            }
+            catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+            {
+                throw new TimeoutException($"LLM timeout in {context} after {_llmTimeout.TotalSeconds:F0}s");
+            }
         }
-        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+        finally
         {
-            throw new TimeoutException($"LLM timeout in {context} after {_llmTimeout.TotalSeconds:F0}s");
+            if (config.Llm.Serialized)
+            {
+                await ReleaseLlmSlotAsync(ct);
+            }
+        }
+    }
+
+    private async Task AcquireLlmSlotAsync(string context, CancellationToken ct)
+    {
+        var leaseDuration = (int)_llmTimeout.TotalSeconds + 60;
+        var waitLogged = false;
+        var lastLogTime = DateTime.UtcNow;
+        while (true)
+        {
+            ct.ThrowIfCancellationRequested();
+            var result = await CallMcpToolAsync("try_acquire_llm_slot", new Dictionary<string, object?>
+            {
+                ["gameId"] = config.GameId,
+                ["raceName"] = config.RaceName,
+                ["password"] = config.Password,
+                ["leaseDurationSeconds"] = leaseDuration,
+            }, ct);
+            if (result == "acquired")
+            {
+                if (waitLogged)
+                {
+                    logger.LogInformation("✅ [{Race}] LLM слот получен для {Context}", config.RaceName, context);
+                }
+
+                return;
+            }
+            if (!waitLogged)
+            {
+                logger.LogInformation("⏳ [{Race}] очередь LLM: ожидаю слот для {Context}", config.RaceName, context);
+                await PostBotStatusAsync("waiting", "очередь LLM: ожидаю слот", ct);
+                waitLogged = true;
+            }
+            else if ((DateTime.UtcNow - lastLogTime).TotalSeconds >= 30)
+            {
+                logger.LogInformation("⏳ [{Race}] ещё жду LLM слот для {Context}…", config.RaceName, context);
+                lastLogTime = DateTime.UtcNow;
+            }
+            await Task.Delay(TimeSpan.FromSeconds(5), ct);
+        }
+    }
+
+    private async Task ReleaseLlmSlotAsync(CancellationToken ct)
+    {
+        try
+        {
+            await CallMcpToolAsync("release_llm_slot", new Dictionary<string, object?>
+            {
+                ["gameId"] = config.GameId,
+                ["raceName"] = config.RaceName,
+                ["password"] = config.Password,
+            }, ct);
+        }
+        catch (Exception ex)
+        {
+            logger.LogDebug("[{Race}] Не удалось освободить LLM слот: {Msg}", config.RaceName, ex.Message);
         }
     }
 

@@ -10,20 +10,24 @@ public sealed class ProductionTests
         ProductionType prod = ProductionType.Capital, string? owner = "P1") =>
         new()
         {
-            Name = "Home", X = 0, Y = 0,
-            Size = 1000, Resources = res,
-            Population = pop, Industry = ind,
-            OwnerId    = owner,
-            Producing  = prod,
+            Name = "Home",
+            X = 0,
+            Y = 0,
+            Size = 1000,
+            Resources = res,
+            Population = pop,
+            Industry = ind,
+            OwnerId = owner,
+            Producing = prod,
             Stockpiles = new Stockpiles(100, 100, 0),
         };
 
     private static Player MakePlayer() => new()
     {
-        Id       = "P1",
-        Name     = "Test",
+        Id = "P1",
+        Name = "Test",
         Password = "pw",
-        Tech     = TechLevels.Initial,
+        Tech = TechLevels.Initial,
     };
 
     [Fact]
@@ -37,9 +41,9 @@ public sealed class ProductionTests
     [Fact]
     public void Materials_production_uses_resources()
     {
-        var planet  = MakePlanet(200, 100, 5.0, ProductionType.Materials);
-        var player  = MakePlayer();
-        var game    = new Game { Id = "G", Name = "T", GalaxySize = 200, Turn = 0 };
+        var planet = MakePlanet(200, 100, 5.0, ProductionType.Materials);
+        var player = MakePlayer();
+        var game = new Game { Id = "G", Name = "T", GalaxySize = 200, Turn = 0 };
         game.Players["P1"] = player;
         game.Planets["Home"] = planet;
 
@@ -55,10 +59,10 @@ public sealed class ProductionTests
     [Fact]
     public void Population_grows_eight_percent_per_turn()
     {
-        var planet  = MakePlanet(100, 50, 1);
+        var planet = MakePlanet(100, 50, 1);
         planet.Stockpiles = new Stockpiles(0, 100, 0);
-        var player  = MakePlayer();
-        var game    = new Game { Id = "G", Name = "T", GalaxySize = 200, Turn = 0 };
+        var player = MakePlayer();
+        var game = new Game { Id = "G", Name = "T", GalaxySize = 200, Turn = 0 };
         game.Players["P1"] = player;
         game.Planets["Home"] = planet;
 

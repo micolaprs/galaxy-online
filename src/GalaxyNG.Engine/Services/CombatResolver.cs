@@ -17,27 +17,42 @@ public sealed class CombatResolver(Random? rng = null)
             .Where(x => IsWarship(x.player, x.group))
             .ToList();
 
-        if (warships.Count < 2) return null;
+        if (warships.Count < 2)
+        {
+            return null;
+        }
 
         // Check if any two groups are at war
         bool anyConflict = false;
         for (int i = 0; i < warships.Count && !anyConflict; i++)
-        for (int j = i + 1; j < warships.Count && !anyConflict; j++)
-            if (AreAtWar(warships[i].player, warships[j].player))
-                anyConflict = true;
+        {
+            for (int j = i + 1; j < warships.Count && !anyConflict; j++)
+            {
+                if (AreAtWar(warships[i].player, warships[j].player))
+                {
+                    anyConflict = true;
+                }
+            }
+        }
 
-        if (!anyConflict) return null;
+        if (!anyConflict)
+        {
+            return null;
+        }
 
         // Build combatant list (one entry per ship — flattened)
         var combatants = BuildCombatants(warships, game);
-        var protocol   = new List<BattleShot>();
+        var protocol = new List<BattleShot>();
 
         // Battle rounds until one side wins or draw
         int maxRounds = 1000;
         while (maxRounds-- > 0)
         {
             // Reset fired flags
-            foreach (var c in combatants) c.HasFired = false;
+            foreach (var c in combatants)
+            {
+                c.HasFired = false;
+            }
 
             // Each ship fires once per round in random order
             var order = combatants
@@ -47,13 +62,20 @@ public sealed class CombatResolver(Random? rng = null)
 
             foreach (var attacker in order)
             {
-                if (!attacker.Alive || attacker.HasFired) continue;
+                if (!attacker.Alive || attacker.HasFired)
+                {
+                    continue;
+                }
+
                 attacker.HasFired = true;
 
                 var enemies = combatants
                     .Where(c => c.Alive && AreAtWar(attacker.Player, c.Player))
                     .ToList();
-                if (enemies.Count == 0) continue;
+                if (enemies.Count == 0)
+                {
+                    continue;
+                }
 
                 for (int gun = 0; gun < attacker.Attacks; gun++)
                 {
@@ -64,7 +86,10 @@ public sealed class CombatResolver(Random? rng = null)
                     {
                         target.Alive = false;
                         enemies.Remove(target);
-                        if (enemies.Count == 0) break;
+                        if (enemies.Count == 0)
+                        {
+                            break;
+                        }
                     }
                 }
             }
@@ -79,7 +104,10 @@ public sealed class CombatResolver(Random? rng = null)
                 alive.Where(e => AreAtWar(a.Player, e.Player))
                      .All(e => a.AttackStrength <= e.DefenseStrength * 0.001)); // effectively immune
 
-            if (won || draw) break;
+            if (won || draw)
+            {
+                break;
+            }
         }
 
         // Determine winner
@@ -104,15 +132,18 @@ public sealed class CombatResolver(Random? rng = null)
             .Where(w => w.player.Id != planet.OwnerId && IsWarship(w.player, w.group))
             .ToList();
 
-        if (attackers.Count == 0 || !planet.IsOwned) return null;
+        if (attackers.Count == 0 || !planet.IsOwned)
+        {
+            return null;
+        }
 
         var prevOwner = planet.OwnerId;
-        var prevPop   = planet.Population;
-        var prevInd   = planet.Industry;
+        var prevPop = planet.Population;
+        var prevInd = planet.Industry;
 
         planet.Population = Math.Round(planet.Population * (1 - BombingReduction), 2);
-        planet.Industry   = Math.Round(planet.Industry   * (1 - BombingReduction), 2);
-        planet.Producing  = ProductionType.Capital;
+        planet.Industry = Math.Round(planet.Industry * (1 - BombingReduction), 2);
+        planet.Producing = ProductionType.Capital;
         planet.ShipTypeName = null;
 
         // Change ownership if only one attacker race left at planet
@@ -123,9 +154,13 @@ public sealed class CombatResolver(Random? rng = null)
 
         var racesAtPlanet = allAtPlanet.Select(x => x.player.Id).Distinct().ToList();
         if (racesAtPlanet.Count == 1)
+        {
             planet.OwnerId = racesAtPlanet[0];
+        }
         else if (racesAtPlanet.Count == 0 || (planet.OwnerId is not null && !racesAtPlanet.Contains(planet.OwnerId!)))
+        {
             planet.OwnerId = null; // contested — unowned
+        }
 
         return new BombingRecord(
             planet.Name,
@@ -140,7 +175,11 @@ public sealed class CombatResolver(Random? rng = null)
 
     private bool DoShot(Combatant attacker, Combatant defender)
     {
-        if (attacker.AttackStrength == 0) return false;
+        if (attacker.AttackStrength == 0)
+        {
+            return false;
+        }
+
         double ratio = attacker.AttackStrength / Math.Max(defender.DefenseStrength, 0.0001);
         // kill if ratio > 4^random   ↔   log4(ratio) > random
         double threshold = Math.Log(ratio) / Math.Log(BattleBase);
@@ -160,16 +199,20 @@ public sealed class CombatResolver(Random? rng = null)
         var list = new List<Combatant>();
         foreach (var (player, group) in warships)
         {
-            if (!player.ShipTypes.TryGetValue(group.ShipTypeName, out var st)) continue;
+            if (!player.ShipTypes.TryGetValue(group.ShipTypeName, out var st))
+            {
+                continue;
+            }
+
             for (int i = 0; i < group.Ships; i++)
             {
                 list.Add(new Combatant
                 {
-                    Player          = player,
-                    Group           = group,
-                    AttackStrength  = st.AttackStrength(group.Tech.Weapons),
+                    Player = player,
+                    Group = group,
+                    AttackStrength = st.AttackStrength(group.Tech.Weapons),
                     DefenseStrength = st.DefenseStrength(group.Tech.Shields, group.Tech.Cargo, group.CargoLoad),
-                    Attacks         = st.Attacks,
+                    Attacks = st.Attacks,
                 });
             }
         }
@@ -192,17 +235,19 @@ public sealed class CombatResolver(Random? rng = null)
 
         // Remove groups with 0 ships
         foreach (var (player, _) in warships)
+        {
             player.Groups.RemoveAll(g => g.Ships <= 0);
+        }
     }
 
     private sealed class Combatant
     {
-        public required Player Player           { get; init; }
-        public required Group  Group            { get; init; }
-        public required double AttackStrength   { get; init; }
-        public required double DefenseStrength  { get; init; }
-        public required int    Attacks          { get; init; }
-        public bool            Alive            { get; set; } = true;
-        public bool            HasFired         { get; set; }
+        public required Player Player { get; init; }
+        public required Group Group { get; init; }
+        public required double AttackStrength { get; init; }
+        public required double DefenseStrength { get; init; }
+        public required int Attacks { get; init; }
+        public bool Alive { get; set; } = true;
+        public bool HasFired { get; set; }
     }
 }

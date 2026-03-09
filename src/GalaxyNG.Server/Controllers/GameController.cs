@@ -14,7 +14,9 @@ public sealed class GameController(GameService svc) : ControllerBase
     public async Task<IActionResult> CreateGame([FromBody] CreateGameRequest req, CancellationToken ct)
     {
         if (req.Players is not { Count: >= 1 })
+        {
             return BadRequest("At least one player required.");
+        }
 
         // maxTurns is the primary input; galaxy size is derived from it.
         int maxTurns = req.MaxTurns is > 0 ? req.MaxTurns.Value : 60;
@@ -22,9 +24,9 @@ public sealed class GameController(GameService svc) : ControllerBase
         GalaxyGeneratorOptions? opts = req.GalaxySize.HasValue
             ? new GalaxyGeneratorOptions
             {
-                GalaxySize   = req.GalaxySize.Value,
-                PlayerCount  = req.Players.Count,
-                MinDist      = req.MinDist ?? GalaxyGenerator.DefaultOptions(req.Players.Count, maxTurns).MinDist,
+                GalaxySize = req.GalaxySize.Value,
+                PlayerCount = req.Players.Count,
+                MinDist = req.MinDist ?? GalaxyGenerator.DefaultOptions(req.Players.Count, maxTurns).MinDist,
                 StuffPlanets = req.StuffPlanets ?? 5,
             }
             : GalaxyGenerator.DefaultOptions(req.Players.Count, maxTurns);
@@ -35,10 +37,10 @@ public sealed class GameController(GameService svc) : ControllerBase
         var baseUrl = $"{Request.Scheme}://{Request.Host}";
         return Created($"{baseUrl}/api/games/{game.Id}", new
         {
-            gameId   = game.Id,
+            gameId = game.Id,
             joinLink = $"{baseUrl}/?game={game.Id}",
-            players  = game.Players.Values.Select(p => new { p.Id, p.Name, p.Password }),
-            turn     = game.Turn,
+            players = game.Players.Values.Select(p => new { p.Id, p.Name, p.Password }),
+            turn = game.Turn,
             maxTurns = game.MaxTurns,
         });
     }
@@ -58,7 +60,9 @@ public sealed class GameController(GameService svc) : ControllerBase
         var games = await svc.ListGamesAsync(ct);
         return Ok(games.Select(g => new
         {
-            g.Id, g.Name, g.Turn,
+            g.Id,
+            g.Name,
+            g.Turn,
             playerCount = g.Players.Count,
             g.LastTurnRunAt,
             g.MaxTurns,
@@ -74,11 +78,22 @@ public sealed class GameController(GameService svc) : ControllerBase
         var game = await svc.GetGameAsync(id, ct);
         return game is null ? NotFound() : Ok(new
         {
-            game.Id, game.Name, game.Turn, game.GalaxySize,
-            game.MaxTurns, game.IsFinished, game.WinnerPlayerId, game.WinnerName, game.FinishReason,
+            game.Id,
+            game.Name,
+            game.Turn,
+            game.GalaxySize,
+            game.MaxTurns,
+            game.IsFinished,
+            game.WinnerPlayerId,
+            game.WinnerName,
+            game.FinishReason,
             players = game.Players.Values.Select(p => new
             {
-                p.Name, p.Tech, p.IsBot, p.IsEliminated, p.Submitted,
+                p.Name,
+                p.Tech,
+                p.IsBot,
+                p.IsEliminated,
+                p.Submitted,
             }),
             planetCount = game.Planets.Count,
         });
@@ -118,12 +133,22 @@ public sealed class GameController(GameService svc) : ControllerBase
     public async Task<IActionResult> ValidateOrders(string id, [FromBody] ValidateOrdersRequest req, CancellationToken ct)
     {
         var game = await svc.GetGameAsync(id, ct);
-        if (game is null) return NotFound();
+        if (game is null)
+        {
+            return NotFound();
+        }
 
         var player = game.Players.Values.FirstOrDefault(p =>
             string.Equals(p.Name, req.RaceName, StringComparison.OrdinalIgnoreCase));
-        if (player is null) return NotFound(new { error = $"Player '{req.RaceName}' not found." });
-        if (player.Password != req.Password) return Unauthorized(new { error = "Wrong password." });
+        if (player is null)
+        {
+            return NotFound(new { error = $"Player '{req.RaceName}' not found." });
+        }
+
+        if (player.Password != req.Password)
+        {
+            return Unauthorized(new { error = "Wrong password." });
+        }
 
         var (parsed, parseErrors) = new GalaxyNG.Engine.Services.OrderParser().Parse(req.Orders ?? "");
         var validator = new GalaxyNG.Engine.Services.OrderValidator(game, player);
@@ -134,7 +159,7 @@ public sealed class GameController(GameService svc) : ControllerBase
 
         return Ok(new
         {
-            valid  = allErrors.Count == 0,
+            valid = allErrors.Count == 0,
             errors = allErrors,
         });
     }
@@ -144,7 +169,10 @@ public sealed class GameController(GameService svc) : ControllerBase
     public async Task<IActionResult> GetSpectate(string id, CancellationToken ct)
     {
         var game = await svc.GetGameAsync(id, ct);
-        if (game is null) return NotFound();
+        if (game is null)
+        {
+            return NotFound();
+        }
 
         var fleetRoutes = game.Players.Values
             .SelectMany(p => p.Groups
@@ -166,7 +194,9 @@ public sealed class GameController(GameService svc) : ControllerBase
 
                     var totalDistance = 0.0;
                     if (game.Planets.TryGetValue(origin, out var op) && game.Planets.TryGetValue(destination, out var dp))
+                    {
                         totalDistance = op.DistanceTo(dp);
+                    }
 
                     var remainingDistance = g.InHyperspace ? Math.Max(0, g.Distance) : 0;
                     var progress = totalDistance > 0
@@ -206,7 +236,11 @@ public sealed class GameController(GameService svc) : ControllerBase
         var playerInfos = game.Players.Values
             .Select(p => new
             {
-                p.Id, p.Name, p.IsBot, p.Submitted, p.IsEliminated,
+                p.Id,
+                p.Name,
+                p.IsBot,
+                p.Submitted,
+                p.IsEliminated,
                 p.Tech,
                 planetCount = game.PlanetsOwnedBy(p.Id).Count(),
             })
@@ -233,23 +267,40 @@ public sealed class GameController(GameService svc) : ControllerBase
 
         return Ok(new
         {
-            game.Id, game.Name, game.Turn, game.GalaxySize,
-            game.LastTurnRunAt, game.AutoRunOnAllSubmitted,
-            game.MaxTurns, game.IsFinished, game.WinnerPlayerId, game.WinnerName, game.FinishReason,
+            game.Id,
+            game.Name,
+            game.Turn,
+            game.GalaxySize,
+            game.LastTurnRunAt,
+            game.AutoRunOnAllSubmitted,
+            game.MaxTurns,
+            game.IsFinished,
+            game.WinnerPlayerId,
+            game.WinnerName,
+            game.FinishReason,
             players = playerInfos,
             planets = game.Planets.Values.Select(p => new
             {
-                p.Name, p.X, p.Y, p.Size, p.OwnerId, p.Population,
+                p.Name,
+                p.X,
+                p.Y,
+                p.Size,
+                p.OwnerId,
+                p.Population,
                 hasShips = game.Players.Values
                     .Any(pl => pl.Groups.Any(g => g.At == p.Name && !g.InHyperspace)),
             }),
-            battles  = game.Battles.Select(b => new
+            battles = game.Battles.Select(b => new
             {
-                b.PlanetName, b.Winner, b.Participants,
+                b.PlanetName,
+                b.Winner,
+                b.Participants,
             }),
             bombings = game.Bombings.Select(b => new
             {
-                b.PlanetName, b.AttackerRace, b.PreviousOwner,
+                b.PlanetName,
+                b.AttackerRace,
+                b.PreviousOwner,
             }),
             fleetRoutes,
             diplomacy = new
@@ -265,9 +316,16 @@ public sealed class GameController(GameService svc) : ControllerBase
     public async Task<IActionResult> GetPlanetDetail(string id, string name, CancellationToken ct)
     {
         var game = await svc.GetGameAsync(id, ct);
-        if (game is null) return NotFound();
+        if (game is null)
+        {
+            return NotFound();
+        }
+
         var planet = game.GetPlanet(name);
-        if (planet is null) return NotFound();
+        if (planet is null)
+        {
+            return NotFound();
+        }
 
         var owner = planet.OwnerId is not null
             ? game.Players.GetValueOrDefault(planet.OwnerId)
@@ -281,16 +339,22 @@ public sealed class GameController(GameService svc) : ControllerBase
 
         return Ok(new
         {
-            planet.Name, planet.X, planet.Y, planet.Size, planet.Resources,
-            planet.Population, planet.Industry, planet.OwnerId,
-            ownerName    = owner?.Name,
+            planet.Name,
+            planet.X,
+            planet.Y,
+            planet.Size,
+            planet.Resources,
+            planet.Population,
+            planet.Industry,
+            planet.OwnerId,
+            ownerName = owner?.Name,
             planet.IsHome,
-            production   = planet.Production,
-            producing    = planet.Producing.ToString(),
+            production = planet.Production,
+            producing = planet.Producing.ToString(),
             planet.ShipTypeName,
-            stockpiles   = new
+            stockpiles = new
             {
-                capital   = planet.Stockpiles.Capital,
+                capital = planet.Stockpiles.Capital,
                 materials = planet.Stockpiles.Materials,
                 colonists = planet.Stockpiles.Colonists,
             },
@@ -303,18 +367,22 @@ public sealed class GameController(GameService svc) : ControllerBase
     public async Task<IActionResult> GetHistory(string id, CancellationToken ct)
     {
         var game = await svc.GetGameAsync(id, ct);
-        if (game is null) return NotFound();
+        if (game is null)
+        {
+            return NotFound();
+        }
+
         return Ok(game.TurnHistory
             .OrderByDescending(h => h.Turn)
             .Select(h => new
             {
                 h.Turn,
                 h.RunAt,
-                players      = h.PlayerOrders.Keys.ToList(),
-                battleCount  = h.Battles.Count,
+                players = h.PlayerOrders.Keys.ToList(),
+                battleCount = h.Battles.Count,
                 bombingCount = h.Bombings.Count,
-                battles      = h.Battles,
-                bombings     = h.Bombings,
+                battles = h.Battles,
+                bombings = h.Bombings,
             }));
     }
 
@@ -324,24 +392,32 @@ public sealed class GameController(GameService svc) : ControllerBase
         string id, int turn, string race, CancellationToken ct)
     {
         var game = await svc.GetGameAsync(id, ct);
-        if (game is null) return NotFound();
+        if (game is null)
+        {
+            return NotFound();
+        }
+
         var hist = game.TurnHistory.FirstOrDefault(h => h.Turn == turn);
-        if (hist is null) return NotFound();
+        if (hist is null)
+        {
+            return NotFound();
+        }
 
         hist.PlayerOrders.TryGetValue(race, out var orders);
         hist.PlayerReasoning.TryGetValue(race, out var reasoning);
         hist.PlayerSummaries.TryGetValue(race, out var summary);
-        var safeOrders    = UiTextPolicy.Clean(orders, 2200);
+        var safeOrders = UiTextPolicy.Clean(orders, 2200);
         var safeReasoning = UiTextPolicy.Clean(reasoning, 2200);
-        var safeSummary   = UiTextPolicy.Clean(summary, 900);
+        var safeSummary = UiTextPolicy.Clean(summary, 900);
         return Ok(new
         {
-            turn, race,
-            orders    = safeOrders,
+            turn,
+            race,
+            orders = safeOrders,
             reasoning = safeReasoning,
-            summary   = safeSummary,
-            battles   = hist.Battles,
-            bombings  = hist.Bombings,
+            summary = safeSummary,
+            battles = hist.Battles,
+            bombings = hist.Bombings,
         });
     }
 
@@ -351,12 +427,21 @@ public sealed class GameController(GameService svc) : ControllerBase
         string id, int turn, string race, CancellationToken ct)
     {
         var game = await svc.GetGameAsync(id, ct);
-        if (game is null) return NotFound();
+        if (game is null)
+        {
+            return NotFound();
+        }
+
         var hist = game.TurnHistory.FirstOrDefault(h => h.Turn == turn);
-        if (hist is null) return NotFound();
+        if (hist is null)
+        {
+            return NotFound();
+        }
 
         if (hist.PlayerSummaries.TryGetValue(race, out var cached) && !string.IsNullOrWhiteSpace(cached))
+        {
             return Ok(new { summary = UiTextPolicy.Clean(cached, 900) });
+        }
 
         var summary = await svc.GenerateTurnSummaryAsync(id, race, turn, ct);
         return summary is null
@@ -403,9 +488,15 @@ public sealed class GameController(GameService svc) : ControllerBase
     public async Task<IActionResult> GetFinalReport(string id, CancellationToken ct)
     {
         var game = await svc.GetGameAsync(id, ct);
-        if (game is null) return NotFound();
+        if (game is null)
+        {
+            return NotFound();
+        }
+
         if (!game.IsFinished)
+        {
             return BadRequest(new { error = "Game is not finished yet." });
+        }
 
         var players = game.Players.Values.ToList();
         var stats = players
@@ -513,7 +604,9 @@ public sealed class GameController(GameService svc) : ControllerBase
             {
                 names.Add(group.At);
                 if (game.Planets.TryGetValue(group.At, out var atPlanet))
+                {
                     anchors.Add(atPlanet);
+                }
             }
 
             foreach (var anchor in anchors)
@@ -521,7 +614,9 @@ public sealed class GameController(GameService svc) : ControllerBase
                 foreach (var candidate in game.Planets.Values)
                 {
                     if (anchor.DistanceTo(candidate) <= sensorRange)
+                    {
                         names.Add(candidate.Name);
+                    }
                 }
             }
 
@@ -532,14 +627,22 @@ public sealed class GameController(GameService svc) : ControllerBase
         foreach (var player in game.Players.Values)
         {
             if (!map.TryGetValue(player.Id, out var mine))
+            {
                 continue;
+            }
 
             foreach (var allyId in player.Allies)
             {
                 if (player.AllianceUntilTurn.TryGetValue(allyId, out var until) && game.Turn > until)
+                {
                     continue;
+                }
+
                 if (!map.TryGetValue(allyId, out var allyVision))
+                {
                     continue;
+                }
+
                 mine.UnionWith(allyVision);
             }
         }
@@ -561,7 +664,9 @@ public sealed class GameController(GameService svc) : ControllerBase
                 var p1 = players[i];
                 var p2 = players[j];
                 if (!game.IdentifiedContactPairs.Contains(BuildPairChannelId(p1.Id, p2.Id)))
+                {
                     continue;
+                }
 
                 var overlap = visibilityByPlayer[p1.Id]
                     .Intersect(visibilityByPlayer[p2.Id], StringComparer.OrdinalIgnoreCase)
@@ -610,11 +715,15 @@ public sealed class GameController(GameService svc) : ControllerBase
     private static bool IsPrivatePairMessage(DiplomacyMessage message, string playerAId, string playerBId)
     {
         if (message.RecipientIds.Count == 0)
+        {
             return false;
+        }
 
         var participants = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { message.SenderId };
         foreach (var recipientId in message.RecipientIds)
+        {
             participants.Add(recipientId);
+        }
 
         return participants.Count == 2 && participants.Contains(playerAId) && participants.Contains(playerBId);
     }
@@ -675,17 +784,51 @@ public sealed class GameController(GameService svc) : ControllerBase
         int bombingCount)
     {
         var result = new List<string>();
-        if (isWinner) result.Add("Победитель партии");
-        if (isEliminated) result.Add("Выбыл до финала");
-        if (string.Equals(race, ecoLeader, StringComparison.OrdinalIgnoreCase)) result.Add("Экономический лидер");
-        if (string.Equals(race, techLeader, StringComparison.OrdinalIgnoreCase)) result.Add("Технологический лидер");
-        if (string.Equals(race, fleetLeader, StringComparison.OrdinalIgnoreCase)) result.Add("Сильнейший флот");
-        if (string.Equals(race, colonyLeader, StringComparison.OrdinalIgnoreCase)) result.Add("Колониальная доминация");
+        if (isWinner)
+        {
+            result.Add("Победитель партии");
+        }
+
+        if (isEliminated)
+        {
+            result.Add("Выбыл до финала");
+        }
+
+        if (string.Equals(race, ecoLeader, StringComparison.OrdinalIgnoreCase))
+        {
+            result.Add("Экономический лидер");
+        }
+
+        if (string.Equals(race, techLeader, StringComparison.OrdinalIgnoreCase))
+        {
+            result.Add("Технологический лидер");
+        }
+
+        if (string.Equals(race, fleetLeader, StringComparison.OrdinalIgnoreCase))
+        {
+            result.Add("Сильнейший флот");
+        }
+
+        if (string.Equals(race, colonyLeader, StringComparison.OrdinalIgnoreCase))
+        {
+            result.Add("Колониальная доминация");
+        }
+
         if (battleWins > 0 && string.Equals(race, battleLeader, StringComparison.OrdinalIgnoreCase))
+        {
             result.Add($"Победы в битвах: {battleWins}");
+        }
+
         if (bombingCount > 0 && string.Equals(race, bombingLeader, StringComparison.OrdinalIgnoreCase))
+        {
             result.Add($"Главный бомбардировщик: {bombingCount}");
-        if (result.Count == 0) result.Add("Стабильная кампания");
+        }
+
+        if (result.Count == 0)
+        {
+            result.Add("Стабильная кампания");
+        }
+
         return result;
     }
 
@@ -732,31 +875,31 @@ public sealed class GameController(GameService svc) : ControllerBase
 public sealed record PlayerInput(string Name, string Password, bool IsBot = false);
 
 public sealed record CreateGameRequest(
-    string            Name,
+    string Name,
     List<PlayerInput> Players,
-    double? GalaxySize   = null,
-    double? MinDist      = null,
-    int?    StuffPlanets = null,
-    bool    AutoRun      = false,
-    int?    MaxTurns     = null
+    double? GalaxySize = null,
+    double? MinDist = null,
+    int? StuffPlanets = null,
+    bool AutoRun = false,
+    int? MaxTurns = null
 );
 
 public sealed record SubmitOrdersRequest(
     string RaceName,
     string Password,
     string Orders,
-    bool   Final = false
+    bool Final = false
 );
 
 public sealed record BotStatusRequest(
-    string  RaceName,
-    string  Status,
-    string? Detail   = null,
+    string RaceName,
+    string Status,
+    string? Detail = null,
     string? Thinking = null
 );
 
 public sealed record ValidateOrdersRequest(
-    string  RaceName,
-    string  Password,
+    string RaceName,
+    string Password,
     string? Orders = null
 );

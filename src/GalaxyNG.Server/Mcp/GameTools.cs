@@ -7,7 +7,7 @@ using ModelContextProtocol.Server;
 namespace GalaxyNG.Server.Mcp;
 
 [McpServerToolType]
-public sealed class GameTools(GameService svc)
+public sealed class GameTools(GameService svc, LlmQueueService llmQueue)
 {
     [McpServerTool, Description("Get general information about a game: galaxy size, current turn, list of races.")]
     public async Task<string> GetGameInfo(
@@ -15,7 +15,10 @@ public sealed class GameTools(GameService svc)
         CancellationToken ct = default)
     {
         var game = await svc.GetGameAsync(gameId, ct);
-        if (game is null) return $"Game '{gameId}' not found.";
+        if (game is null)
+        {
+            return $"Game '{gameId}' not found.";
+        }
 
         var sb = new System.Text.StringBuilder();
         sb.AppendLine($"Game: {game.Name} (ID: {game.Id})");
@@ -40,11 +43,16 @@ public sealed class GameTools(GameService svc)
         CancellationToken ct = default)
     {
         var game = await svc.GetGameAsync(gameId, ct);
-        if (game is null) return """{"error":"game_not_found"}""";
+        if (game is null)
+        {
+            return """{"error":"game_not_found"}""";
+        }
 
         var player = game.GetPlayer(raceName);
         if (player is null || player.Password != password)
+        {
             return """{"error":"auth_failed"}""";
+        }
 
         var payload = new
         {
@@ -79,11 +87,16 @@ public sealed class GameTools(GameService svc)
         CancellationToken ct = default)
     {
         var game = await svc.GetGameAsync(gameId, ct);
-        if (game is null) return """{"error":"game_not_found"}""";
+        if (game is null)
+        {
+            return """{"error":"game_not_found"}""";
+        }
 
         var me = game.GetPlayer(raceName);
         if (me is null || me.Password != password)
+        {
             return """{"error":"auth_failed"}""";
+        }
 
         var contacts = new List<object>();
         foreach (var other in game.Players.Values
@@ -107,7 +120,10 @@ public sealed class GameTools(GameService svc)
             for (int i = pairMessages.Count - 1; i >= 0; i--)
             {
                 if (!pairMessages[i].SenderId.Equals(me.Id, StringComparison.OrdinalIgnoreCase))
+                {
                     break;
+                }
+
                 unansweredMineStreak++;
             }
 
@@ -157,13 +173,20 @@ public sealed class GameTools(GameService svc)
         CancellationToken ct = default)
     {
         var game = await svc.GetGameAsync(gameId, ct);
-        if (game is null) return "Game not found.";
+        if (game is null)
+        {
+            return "Game not found.";
+        }
+
         var player = game.GetPlayer(raceName);
-        if (player is null || player.Password != password) return "Auth failed.";
+        if (player is null || player.Password != password)
+        {
+            return "Auth failed.";
+        }
 
         var (parsed, errors) = new OrderParser().Parse(orders);
         var validator = new OrderValidator(game, player);
-        var results   = validator.ValidateAll(parsed);
+        var results = validator.ValidateAll(parsed);
 
         var allErrors = errors.Concat(
             results.Where(r => !r.Ok).Select(r => r.Error ?? "Unknown error")).ToList();
@@ -210,11 +233,23 @@ public sealed class GameTools(GameService svc)
         CancellationToken ct = default)
     {
         var game = await svc.GetGameAsync(gameId, ct);
-        if (game is null) return "Game not found.";
+        if (game is null)
+        {
+            return "Game not found.";
+        }
+
         var p1 = game.GetPlanet(planet1);
         var p2 = game.GetPlanet(planet2);
-        if (p1 is null) return $"Planet '{planet1}' not found.";
-        if (p2 is null) return $"Planet '{planet2}' not found.";
+        if (p1 is null)
+        {
+            return $"Planet '{planet1}' not found.";
+        }
+
+        if (p2 is null)
+        {
+            return $"Planet '{planet2}' not found.";
+        }
+
         return $"Distance from {p1.Name} to {p2.Name}: {p1.DistanceTo(p2):F2} ly";
     }
 
@@ -230,7 +265,7 @@ public sealed class GameTools(GameService svc)
         [Description("Tech levels as 'drive,weapons,shields,cargo' e.g. '1.5,1.2,1.0,2.0'")] string techLevels = "1,1,1,1")
     {
         var tech = ParseTech(techLevels);
-        var st   = new ShipType { Name = "Test", Drive = drive, Attacks = attacks, Weapons = weapons, Shields = shields, Cargo = cargo };
+        var st = new ShipType { Name = "Test", Drive = drive, Attacks = attacks, Weapons = weapons, Shields = shields, Cargo = cargo };
 
         var sb = new System.Text.StringBuilder();
         sb.AppendLine($"Ship stats:");
@@ -240,6 +275,55 @@ public sealed class GameTools(GameService svc)
         sb.AppendLine($"  Attack strength: {st.AttackStrength(tech.Weapons):F2}");
         sb.AppendLine($"  Defense:         {st.DefenseStrength(tech.Shields, tech.Cargo, 0):F2}");
         return sb.ToString();
+    }
+
+    [McpServerTool, Description(
+        "Try to acquire the global LLM serialization slot. Returns 'acquired' if successful, 'busy' if another race holds it. " +
+        "Call with leaseDurationSeconds = LlmTimeoutSeconds + 60 to cover the full call duration.")]
+    public async Task<string> TryAcquireLlmSlot(
+        [Description("Game ID")] string gameId,
+        [Description("Your race name")] string raceName,
+        [Description("Your password")] string password,
+        [Description("Lease duration in seconds (set to LlmTimeoutSeconds + 60)")] int leaseDurationSeconds = 300,
+        CancellationToken ct = default)
+    {
+        var game = await svc.GetGameAsync(gameId, ct);
+        if (game is null)
+        {
+            return """{"error":"game_not_found"}""";
+        }
+
+        var player = game.GetPlayer(raceName);
+        if (player is null || player.Password != password)
+        {
+            return """{"error":"auth_failed"}""";
+        }
+
+        return llmQueue.TryAcquire(raceName, leaseDurationSeconds) ? "acquired" : "busy";
+    }
+
+    [McpServerTool, Description(
+        "Release the global LLM serialization slot held by this race. Call this after every LLM call completes (or fails).")]
+    public async Task<string> ReleaseLlmSlot(
+        [Description("Game ID")] string gameId,
+        [Description("Your race name")] string raceName,
+        [Description("Your password")] string password,
+        CancellationToken ct = default)
+    {
+        var game = await svc.GetGameAsync(gameId, ct);
+        if (game is null)
+        {
+            return """{"error":"game_not_found"}""";
+        }
+
+        var player = game.GetPlayer(raceName);
+        if (player is null || player.Password != password)
+        {
+            return """{"error":"auth_failed"}""";
+        }
+
+        llmQueue.Release(raceName);
+        return "released";
     }
 
     private static TechLevels ParseTech(string s)
@@ -252,11 +336,15 @@ public sealed class GameTools(GameService svc)
     private static bool IsPrivatePairMessage(DiplomacyMessage message, string playerAId, string playerBId)
     {
         if (message.RecipientIds.Count == 0)
+        {
             return false;
+        }
 
         var participants = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { message.SenderId };
         foreach (var recipientId in message.RecipientIds)
+        {
             participants.Add(recipientId);
+        }
 
         return participants.Count == 2 && participants.Contains(playerAId) && participants.Contains(playerBId);
     }

@@ -43,17 +43,22 @@ file sealed class RemoteLogger(
         LogLevel logLevel, EventId eventId, TState state,
         Exception? exception, Func<TState, Exception?, string> formatter)
     {
-        if (!IsEnabled(logLevel)) return;
+        if (!IsEnabled(logLevel))
+        {
+            return;
+        }
 
         var msg = formatter(state, exception);
         if (exception is not null)
+        {
             msg += $"\n{exception.GetType().Name}: {exception.Message}";
+        }
 
         var entry = new
         {
-            level    = logLevel.ToString(),
+            level = logLevel.ToString(),
             category = $"Bot[{raceName}]/{Short(category)}",
-            message  = msg,
+            message = msg,
         };
 
         // POST fire-and-forget — ignore any errors to not disturb the bot
