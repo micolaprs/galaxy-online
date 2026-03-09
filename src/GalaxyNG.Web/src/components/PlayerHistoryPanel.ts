@@ -32,6 +32,8 @@ export class PlayerHistoryPanel {
   private botStatuses: Map<string, BotStatusEvent>;
 
   private selectedRace: string | null = null;
+  private playerSortCol: 'name' | 'planets' = 'planets';
+  private playerSortAsc = false;
   private history: TurnHistoryEntry[] = [];
   private selectedTurn: number | null = null;
   private turnDetail: TurnPlayerOrders | null = null;
@@ -57,7 +59,17 @@ export class PlayerHistoryPanel {
   }
 
   private renderPlayerList(): void {
-    const colorDots = this.players.map(p => {
+    const col = this.playerSortCol;
+    const asc = this.playerSortAsc;
+    const sorted = this.players.slice().sort((a, b) => {
+      const cmp = col === 'name'
+        ? a.name.localeCompare(b.name)
+        : a.planetCount - b.planetCount;
+      return asc ? cmp : -cmp;
+    });
+    const arrow = (c: typeof col) => c === col ? (asc ? ' ▲' : ' ▼') : '';
+
+    const colorDots = sorted.map(p => {
       const color = this.playerColorMap.get(p.id) ?? '#888';
 
       // Determine status label + css class
@@ -101,9 +113,22 @@ export class PlayerHistoryPanel {
     }).join('');
 
     this.el.innerHTML = `
-      <div class="ph-title">Выбери игрока:</div>
+      <div class="ph-sort-bar">
+        <span class="ph-sort-label">Сортировка:</span>
+        <button class="ph-sort-btn${col === 'planets' ? ' active' : ''}" data-col="planets">Рейтинг${arrow('planets')}</button>
+        <button class="ph-sort-btn${col === 'name' ? ' active' : ''}" data-col="name">Имя${arrow('name')}</button>
+      </div>
       <div class="ph-player-list">${colorDots}</div>
     `;
+
+    this.el.querySelectorAll<HTMLElement>('.ph-sort-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const c = btn.dataset['col'] as typeof col;
+        if (this.playerSortCol === c) this.playerSortAsc = !this.playerSortAsc;
+        else { this.playerSortCol = c; this.playerSortAsc = c === 'name'; }
+        this.renderPlayerList();
+      });
+    });
 
     this.el.querySelectorAll<HTMLElement>('.ph-player-row').forEach(row => {
       row.addEventListener('click', () => {

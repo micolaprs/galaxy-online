@@ -217,9 +217,23 @@ BOT_PIDS=()
 cleanup() {
   echo ""
   info "Останавливаем все фоновые процессы…"
-  [[ ${#BOT_PIDS[@]} -gt 0 ]] && kill "${BOT_PIDS[@]}" 2>/dev/null || true
-  $SERVER_MANAGED && [[ -n "$SERVER_PID" ]] && kill "$SERVER_PID" 2>/dev/null || true
-  wait 2>/dev/null || true
+
+  # SIGTERM известным PID (dotnet watch)
+  [[ ${#BOT_PIDS[@]} -gt 0 ]] && kill -TERM "${BOT_PIDS[@]}" 2>/dev/null || true
+  $SERVER_MANAGED && [[ -n "$SERVER_PID" ]] && kill -TERM "$SERVER_PID" 2>/dev/null || true
+
+  # Добиваем дочерние dotnet-процессы по имени (dotnet watch порождает их сам)
+  pkill -TERM -f "GalaxyNG.Server" 2>/dev/null || true
+  pkill -TERM -f "GalaxyNG.Bot"    2>/dev/null || true
+
+  sleep 1
+
+  # Принудительно убиваем оставшихся
+  pkill -KILL -f "GalaxyNG.Server" 2>/dev/null || true
+  pkill -KILL -f "GalaxyNG.Bot"    2>/dev/null || true
+  [[ ${#BOT_PIDS[@]} -gt 0 ]] && kill -KILL "${BOT_PIDS[@]}" 2>/dev/null || true
+  $SERVER_MANAGED && [[ -n "$SERVER_PID" ]] && kill -KILL "$SERVER_PID" 2>/dev/null || true
+
   ok "Готово."
 }
 trap cleanup EXIT INT TERM
@@ -319,6 +333,7 @@ cd "$SERVER_DIR"
 if curl -sf "$SERVER_URL/api/games" > /dev/null 2>&1; then
   warn "Сервер уже работает на $SERVER_URL — используем существующий"
 else
+  DOTNET_WATCH_RESTART_ON_RUDE_EDIT=true \
   Llm__Provider="$SERVER_LLM_PROVIDER" \
   Llm__BaseUrl="$SERVER_LLM_BASE_URL" \
   Llm__Model="$SERVER_LLM_MODEL" \
@@ -468,6 +483,7 @@ else
     Bot__Llm__ApiKey="$BOT_LLM_API_KEY" \
     Bot__Llm__AccountId="$BOT_LLM_ACCOUNT_ID" \
     Bot__Llm__AuthFilesDir="$BOT_LLM_AUTH_DIR" \
+    DOTNET_WATCH_RESTART_ON_RUDE_EDIT=true \
       dotnet watch run --no-launch-profile >> "$LOG_FILE" 2>&1 &
     BOT_PIDS+=($!)
     ok "Бот $BOT_NAME запущен (PID ${BOT_PIDS[$i]}, лог: $LOG_FILE)"

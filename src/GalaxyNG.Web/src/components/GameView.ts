@@ -1,5 +1,5 @@
 import { api } from '../api/client.js';
-import type { Session, SpectateData, SpectatePlayer } from '../types/api.js';
+import type { Session, SpectateData, SpectatePlayer, SpectatePlanet } from '../types/api.js';
 import { GalaxyMapThree, type ThreePlanet, type ThreeFleetRoute, type ThreeCombatEvents } from './GalaxyMapThree.js';
 import { OrdersEditor } from './OrdersEditor.js';
 
@@ -13,6 +13,7 @@ export class GameView {
   private map!: GalaxyMapThree;
   private editor!: OrdersEditor;
   private reportEl!: HTMLElement;
+  private planetListEl!: HTMLElement;
   private statusBar!: HTMLElement;
   private session: Session;
   private gameId: string;
@@ -51,12 +52,16 @@ export class GameView {
           <div class="panel-tabs">
             <button class="ptab active" data-panel="orders">Orders</button>
             <button class="ptab" data-panel="report">Turn Report</button>
+            <button class="ptab" data-panel="planets">Планеты</button>
           </div>
           <div id="panel-orders" class="panel-content">
             <div id="orders-container"></div>
           </div>
           <div id="panel-report" class="panel-content hidden">
             <pre id="report-text" class="report-text"></pre>
+          </div>
+          <div id="panel-planets" class="panel-content hidden">
+            <div id="planet-list" class="planet-list"></div>
           </div>
         </div>
       </div>
@@ -71,8 +76,9 @@ export class GameView {
     this.editor = new OrdersEditor(ordersContainer);
     this.editor.setContext(this.gameId, this.session);
 
-    this.reportEl  = this.el.querySelector('#report-text')!;
-    this.statusBar = this.el.querySelector('#status-bar')!;
+    this.reportEl     = this.el.querySelector('#report-text')!;
+    this.planetListEl = this.el.querySelector('#planet-list')!;
+    this.statusBar    = this.el.querySelector('#status-bar')!;
 
     this.el.querySelectorAll<HTMLButtonElement>('.ptab').forEach(btn => {
       btn.addEventListener('click', () => {
@@ -164,6 +170,59 @@ export class GameView {
 
     this.map.setData(data.galaxySize, planets, fleetRoutes, combatEvents);
     this.map.setRouteDisplay(true, null);
+    this.renderPlanetList(data);
+  }
+
+  private renderPlanetList(data: SpectateData): void {
+    const byOwner = new Map<string | null, SpectatePlanet[]>();
+    for (const p of data.planets) {
+      const key = p.ownerId ?? null;
+      if (!byOwner.has(key)) byOwner.set(key, []);
+      byOwner.get(key)!.push(p);
+    }
+
+    const playerById = new Map(data.players.map(p => [p.id, p]));
+
+    const renderGroup = (ownerId: string | null, planets: SpectatePlanet[]): string => {
+      const player   = ownerId ? playerById.get(ownerId) : null;
+      const color    = ownerId ? (this.playerColorMap.get(ownerId) ?? '#888') : '#4b5563';
+      const label    = player ? player.name : 'Нейтральные';
+      const totalPop = planets.reduce((s, p) => s + p.population, 0);
+      const rows     = planets
+        .slice()
+        .sort((a, b) => b.population - a.population)
+        .map(p => `
+          <tr>
+            <td>${p.name}</td>
+            <td class="pl-num">${Math.round(p.size)}</td>
+            <td class="pl-num">${Math.round(p.population)}</td>
+          </tr>`)
+        .join('');
+      return `
+        <div class="pl-group">
+          <div class="pl-group-header" style="border-left: 3px solid ${color}">
+            <span style="color:${color}">${label}</span>
+            <span class="pl-stats">${planets.length} планет · ${Math.round(totalPop)} поп</span>
+          </div>
+          <table class="pl-table">
+            <thead><tr><th>Планета</th><th class="pl-num">Размер</th><th class="pl-num">Население</th></tr></thead>
+            <tbody>${rows}</tbody>
+          </table>
+        </div>`;
+    };
+
+    // Players sorted by planet count desc, then neutrals
+    const playerGroups = data.players
+      .filter(p => byOwner.has(p.id))
+      .sort((a, b) => (byOwner.get(b.id)?.length ?? 0) - (byOwner.get(a.id)?.length ?? 0))
+      .map(p => renderGroup(p.id, byOwner.get(p.id)!))
+      .join('');
+
+    const neutralGroup = byOwner.has(null)
+      ? renderGroup(null, byOwner.get(null)!)
+      : '';
+
+    this.planetListEl.innerHTML = playerGroups + neutralGroup;
   }
 
   private async loadReport(): Promise<void> {

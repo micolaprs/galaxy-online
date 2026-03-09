@@ -1,7 +1,7 @@
 import { api } from '../api/client.js';
 import { ensureConnected } from '../api/hub.js';
 import type {
-  SpectateData, SpectatePlayer, SpectateBattle, SpectateBombing,
+  SpectateData, SpectatePlayer, SpectateBattle, SpectateBombing, SpectatePlanet,
   BotStatusEvent, TechLevels, SpectateChatMessage, SpectatePrivateChat, FinalGameReport,
 } from '../types/api.js';
 import {
@@ -47,7 +47,9 @@ export class WatchView {
   private botStatuses = new Map<string, BotStatusEvent>();
   private hub: HubConnection | null = null;
   private lastData: SpectateData | null = null;
-  private activeRightTab: 'players' | 'summary' | 'combat' = 'players';
+  private activeRightTab: 'players' | 'summary' | 'combat' | 'planets' = 'players';
+  private planetSortCol: 'name' | 'size' | 'population' = 'population';
+  private planetSortAsc = false;
   private diplomacyCollapsed = false;
   private showAllRoutes = true;
   private routeFocusPlanet: string | null = null;
@@ -137,12 +139,16 @@ export class WatchView {
           <div class="wv-right-col">
             <div class="wv-right-tabs">
               <button class="wv-rtab active" data-tab="players">Игроки</button>
+              <button class="wv-rtab" data-tab="planets">Планеты</button>
               <button class="wv-rtab" data-tab="combat">Сражения</button>
               <button class="wv-rtab" data-tab="summary">Галактика</button>
             </div>
             <div class="wv-right-body">
               <div class="wv-tab-content active" id="tab-players">
                 <!-- Player list -->
+              </div>
+              <div class="wv-tab-content" id="tab-planets">
+                <div class="planet-list" id="wv-planet-list"></div>
               </div>
               <div class="wv-tab-content" id="tab-combat">
                 <!-- Combat intel -->
@@ -171,7 +177,7 @@ export class WatchView {
         this.el.querySelectorAll('.wv-rtab').forEach(b => b.classList.remove('active'));
         this.el.querySelectorAll('.wv-tab-content').forEach(c => c.classList.remove('active'));
         btn.classList.add('active');
-        const tab = btn.dataset['tab'] as 'players' | 'summary' | 'combat';
+        const tab = btn.dataset['tab'] as 'players' | 'summary' | 'combat' | 'planets';
         this.activeRightTab = tab;
         this.el.querySelector(`#tab-${tab}`)!.classList.add('active');
       });
@@ -238,6 +244,7 @@ export class WatchView {
       this.updateTitle(data);
       this.updatePlayerColors(data.players);
       this.renderPlayers(data);
+      this.renderPlanetList(data);
       this.updateMap(data);
       this.renderDiplomacy(data);
 
@@ -293,6 +300,86 @@ export class WatchView {
   private renderPlayers(data: SpectateData | null): void {
     if (!data || this.activeRightTab !== 'players') return;
     this.playerHistoryPanel.updatePlayers(data.players);
+  }
+
+  private renderPlanetList(data: SpectateData): void {
+    const el = this.el.querySelector<HTMLElement>('#wv-planet-list');
+    if (!el) return;
+
+    const col = this.planetSortCol;
+    const asc = this.planetSortAsc;
+
+    const sortPlanets = (planets: SpectatePlanet[]) => planets.slice().sort((a, b) => {
+      let cmp = 0;
+      if (col === 'name')       cmp = a.name.localeCompare(b.name);
+      else if (col === 'size')  cmp = a.size - b.size;
+      else                      cmp = a.population - b.population;
+      return asc ? cmp : -cmp;
+    });
+
+    const arrow = (c: typeof col) => c === col ? (asc ? ' ▲' : ' ▼') : '';
+
+    const byOwner = new Map<string | null, SpectatePlanet[]>();
+    for (const p of data.planets) {
+      const key = p.ownerId ?? null;
+      if (!byOwner.has(key)) byOwner.set(key, []);
+      byOwner.get(key)!.push(p);
+    }
+
+    const playerById = new Map(data.players.map(p => [p.id, p]));
+
+    const renderGroup = (ownerId: string | null, planets: SpectatePlanet[]): string => {
+      const player   = ownerId ? playerById.get(ownerId) : null;
+      const color    = ownerId ? (this.playerColorMap.get(ownerId) ?? '#888') : '#4b5563';
+      const label    = player ? player.name : 'Нейтральные';
+      const totalPop = planets.reduce((s, p) => s + p.population, 0);
+      const rows     = sortPlanets(planets).map(p => `
+        <tr class="pl-row" data-planet="${esc(p.name)}">
+          <td>${esc(p.name)}</td>
+          <td class="pl-num">${Math.round(p.size)}</td>
+          <td class="pl-num">${Math.round(p.population)}</td>
+        </tr>`).join('');
+      return `
+        <div class="pl-group">
+          <div class="pl-group-header" style="border-left:3px solid ${color}">
+            <span style="color:${color}">${esc(label)}</span>
+            <span class="pl-stats">${planets.length} · ${Math.round(totalPop)} поп</span>
+          </div>
+          <table class="pl-table">
+            <thead><tr>
+              <th class="pl-sort-th" data-col="name">Планета${arrow('name')}</th>
+              <th class="pl-sort-th pl-num" data-col="size">Размер${arrow('size')}</th>
+              <th class="pl-sort-th pl-num" data-col="population">Население${arrow('population')}</th>
+            </tr></thead>
+            <tbody>${rows}</tbody>
+          </table>
+        </div>`;
+    };
+
+    const playerGroups = data.players
+      .filter(p => byOwner.has(p.id))
+      .sort((a, b) => (byOwner.get(b.id)?.length ?? 0) - (byOwner.get(a.id)?.length ?? 0))
+      .map(p => renderGroup(p.id, byOwner.get(p.id)!))
+      .join('');
+
+    const neutralGroup = byOwner.has(null) ? renderGroup(null, byOwner.get(null)!) : '';
+    el.innerHTML = playerGroups + neutralGroup;
+
+    el.querySelectorAll<HTMLElement>('.pl-sort-th').forEach(th => {
+      th.addEventListener('click', () => {
+        const c = th.dataset['col'] as typeof col;
+        if (this.planetSortCol === c) this.planetSortAsc = !this.planetSortAsc;
+        else { this.planetSortCol = c; this.planetSortAsc = c === 'name'; }
+        if (this.lastData) this.renderPlanetList(this.lastData);
+      });
+    });
+
+    el.querySelectorAll<HTMLElement>('.pl-row').forEach(row => {
+      row.addEventListener('click', () => {
+        const planet = row.dataset['planet'];
+        if (planet) this.navigateToPlanet(planet);
+      });
+    });
   }
 
   private updateMap(data: SpectateData): void {

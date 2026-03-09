@@ -190,7 +190,14 @@ public sealed class BotAgent(
                 orders = AppendGlobalMessage(orders, checkpoint.ContinueMessage);
             }
 
-            orders = await AppendDynamicDiplomacyAsync(orders, turn, report, ct);
+            try
+            {
+                orders = await AppendDynamicDiplomacyAsync(orders, turn, report, ct);
+            }
+            catch (TimeoutException ex)
+            {
+                logger.LogWarning("⏱ [{Race}] Дипломатия пропущена (таймаут LLM): {Msg}", config.RaceName, ex.Message);
+            }
             orders = CanonicalizeOrdersWithTurnContext(orders, _turnToolContext, out var canonicalFixes);
             orders = EnforceCommandWhitelist(orders, _turnToolContext, out var rewrittenByPreflight, out var droppedByPreflight);
             if (rewrittenByPreflight > 0 || droppedByPreflight > 0)
@@ -360,7 +367,19 @@ public sealed class BotAgent(
         CancellationToken ct)
     {
         var client = await GetMcpClientAsync(ct);
-        var result = await client.CallToolAsync(toolName, args, cancellationToken: ct);
+        CallToolResponse result;
+        try
+        {
+            result = await client.CallToolAsync(toolName, args, cancellationToken: ct);
+        }
+        catch (Exception)
+        {
+            // Server may have restarted — drop the cached client so it is recreated on next call.
+            await _mcpInitLock.WaitAsync(ct);
+            try { _mcpClient = null; }
+            finally { _mcpInitLock.Release(); }
+            throw;
+        }
         var text = string.Concat(result.Content
             .OfType<TextContentBlock>()
             .Select(c => c.Text ?? ""));

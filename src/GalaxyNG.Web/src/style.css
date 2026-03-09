@@ -122,6 +122,25 @@ input:focus { outline: none; border-color: var(--accent); }
 .orders-status.error { color: var(--red); }
 .orders-status.info  { color: var(--muted); }
 
+/* ---- Planet List ---- */
+.planet-list { flex: 1; overflow-y: auto; padding: 8px 12px; }
+.pl-group { margin-bottom: 16px; }
+.pl-group-header {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 4px 8px; margin-bottom: 4px;
+  background: var(--surface); border-radius: 3px; font-size: 12px; font-weight: 600;
+}
+.pl-stats { font-size: 11px; color: var(--muted); font-weight: 400; }
+.pl-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.pl-table th { color: var(--muted); text-align: left; padding: 3px 6px; border-bottom: 1px solid var(--border); font-weight: 400; }
+.pl-table td { padding: 3px 6px; border-bottom: 1px solid color-mix(in srgb, var(--border) 50%, transparent); }
+.pl-table tr:last-child td { border-bottom: none; }
+.pl-sort-th { cursor: pointer; user-select: none; white-space: nowrap; }
+.pl-sort-th:hover { color: var(--accent); }
+.pl-row { cursor: pointer; }
+.pl-row:hover td { background: color-mix(in srgb, var(--accent) 10%, transparent); }
+.pl-num { text-align: right; }
+
 /* ---- Turn Report ---- */
 .report-text {
   flex: 1; padding: 12px; overflow: auto; font-size: 12px;
@@ -902,6 +921,18 @@ input:focus { outline: none; border-color: var(--accent); }
 }
 
 /* ---- Player History Panel ---- */
+.ph-sort-bar {
+  display: flex; align-items: center; gap: 4px;
+  padding: 6px 10px; border-bottom: 1px solid var(--border); flex-shrink: 0;
+}
+.ph-sort-label { font-size: 10px; color: var(--muted); margin-right: 2px; }
+.ph-sort-btn {
+  padding: 2px 8px; font-size: 11px; border: 1px solid var(--border); border-radius: 3px;
+  background: transparent; color: var(--muted); cursor: pointer; font-family: inherit;
+}
+.ph-sort-btn:hover { color: var(--text); border-color: var(--accent); }
+.ph-sort-btn.active { color: var(--accent); border-color: var(--accent); }
+
 .ph-title {
   padding: 10px 14px 6px; font-size: 10px; text-transform: uppercase;
   letter-spacing: .06em; color: var(--muted); flex-shrink: 0;
