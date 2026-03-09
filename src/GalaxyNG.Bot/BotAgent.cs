@@ -18,8 +18,7 @@ public sealed class BotAgent(
     ILogger<BotAgent> logger)
 {
     private readonly TimeSpan _llmTimeout = TimeSpan.FromSeconds(Math.Clamp(config.LlmTimeoutSeconds, 30, 600));
-    // Named OS semaphore shared across all bot processes on the same machine (for lmstudio serialization)
-    private static readonly System.Threading.Semaphore _llmOsSemaphore = new(1, 1, "GalaxyNG_LlmQueue");
+    private static readonly SemaphoreSlim _llmSemaphore = new(1, 1);
     private readonly ILoggerFactory _loggerFactory = loggerFactory;
     private readonly BotStrategy _strategy = BotStrategyCatalog.PickForBot(config.GameId, config.RaceName, config.StrategyId);
     private string SystemPrompt => StrategyPrompt.BuildSystemPrompt(_strategy);
@@ -2110,25 +2109,22 @@ public sealed class BotAgent(
         {
             if (config.Llm.Serialized)
             {
-                _llmOsSemaphore.Release();
+                _llmSemaphore.Release();
             }
         }
     }
 
     private async Task AcquireLlmSlotAsync(string context, CancellationToken ct)
     {
-        if (_llmOsSemaphore.WaitOne(0))
+        if (_llmSemaphore.CurrentCount > 0)
         {
-            return; // got it immediately
+            await _llmSemaphore.WaitAsync(ct);
+            return;
         }
 
         logger.LogInformation("⏳ [{Race}] очередь LLM: ожидаю слот ({Context})…", config.RaceName, context);
         await PostBotStatusAsync("waiting", "очередь LLM", ct);
-
-        while (!_llmOsSemaphore.WaitOne(500))
-        {
-            ct.ThrowIfCancellationRequested();
-        }
+        await _llmSemaphore.WaitAsync(ct);
 
         logger.LogInformation("✅ [{Race}] LLM слот получен ({Context})", config.RaceName, context);
     }

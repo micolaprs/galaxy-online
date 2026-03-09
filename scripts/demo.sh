@@ -306,7 +306,7 @@ if [[ -n "$BOT_LLM_AUTH_DIR" ]]; then
 fi
 
 # ── LLM settings ─────────────────────────────────────────────────────────────
-# lmstudio: bots use a named OS semaphore (GalaxyNG_LlmQueue) for serialization — no stagger needed.
+# lmstudio: bots use a SemaphoreSlim for serialization — no stagger needed.
 # openai/codex: cloud API handles parallel requests fine.
 BOT_LLM_TIMEOUT="${GALAXYNG_BOT_LLM_TIMEOUT:-240}"
 BOT_POLL_INTERVAL="${GALAXYNG_BOT_POLL_INTERVAL:-12}"
