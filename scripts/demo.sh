@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 # demo.sh — запуск тестовой игры
 # Использование:
-#   ./scripts/demo.sh                # 3 бота, возобновляет последнюю игру (или создаёт новую)
-#   ./scripts/demo.sh --new          # всегда создавать новую игру (удаляет старые)
+#   ./scripts/demo.sh                # 3 бота, всегда создаёт новую игру
+#   ./scripts/demo.sh --resume       # возобновляет последнюю игру, если она не завершена
+#                                    # иначе создаёт новую с её же параметрами
+#   ./scripts/demo.sh --new          # явный флаг: создать новую игру
 #   ./scripts/demo.sh -b -n 5        # только боты, 5 штук
 #   ./scripts/demo.sh -n 5           # 5 ботов
 #   ./scripts/demo.sh -s 400         # размер галактики
@@ -19,8 +21,7 @@ BOTS_ONLY=true
 OPEN_BROWSER=true
 NUM_BOTS=3
 DO_KILL=false   # по умолчанию: не убиваем старые процессы (watch перезапускается сам)
-DO_CLEAN=false  # по умолчанию: возобновляем последнюю игру
-FORCE_NEW=false # --new: удалить старые и создать новую
+FORCE_NEW=true  # по умолчанию: всегда создаём новую игру
 DO_CLEAN_LOGS=false # по умолчанию: не очищаем логи
 LLM_PROVIDER="${GALAXYNG_BOT_LLM_PROVIDER:-openai/codex}"
 PROVIDER_AUTH_DIR="${GALAXYNG_OPENAI_CODEX_AUTH_DIR:-}"
@@ -38,7 +39,8 @@ while [[ $# -gt 0 ]]; do
     --no-kill)      DO_KILL=false; shift ;;
     --clean-logs)   DO_CLEAN_LOGS=true; shift ;;
     --no-clean-logs) DO_CLEAN_LOGS=false; shift ;;
-    --new)          FORCE_NEW=true; DO_CLEAN=true; shift ;;
+    --resume)       FORCE_NEW=false; shift ;;
+    --new)          FORCE_NEW=true; shift ;;
     --openai-codex) LLM_PROVIDER="openai/codex"; shift ;;
     --provider)     LLM_PROVIDER="$2"; shift 2 ;;
     --auth-dir)     PROVIDER_AUTH_DIR="$2"; shift 2 ;;
@@ -46,10 +48,11 @@ while [[ $# -gt 0 ]]; do
     -h|--help)
       echo "Использование: $0 [опции]"
       echo ""
-      echo "  По умолчанию: возобновляет последнюю сохранённую игру."
-      echo "  Если игр нет — создаёт новую."
+      echo "  По умолчанию: всегда создаёт новую игру."
       echo ""
-      echo "  --new                 Всегда создавать новую игру (удаляет старые)"
+      echo "  --resume              Возобновить последнюю сохранённую игру,"
+      echo "                        а если она завершена — создать новую с её же параметрами"
+      echo "  --new                 Явно создать новую игру"
       echo "  -b, --bots-only       Все игроки — боты (без человека)"
       echo "  -n, --bots NUM        Количество ботов (по умолчанию: 3)"
       echo "  -s, --size SIZE       Размер галактики (по умолчанию: 200)"
@@ -69,7 +72,7 @@ while [[ $# -gt 0 ]]; do
       echo "    GALAXYNG_OPENAI_CODEX_AUTH_DIR=~/.codex"
       echo "    GALAXYNG_DEMO_MAX_TURNS=60"
       echo ""
-      echo "По умолчанию: убиваем старые процессы + возобновляем последнюю игру + открываем браузер."
+      echo "По умолчанию: создаём новую игру и открываем браузер."
       exit 0 ;;
     *) echo "Неизвестный флаг: $1" >&2; exit 1 ;;
   esac
@@ -117,7 +120,6 @@ REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 SERVER_DIR="$REPO_ROOT/src/GalaxyNG.Server"
 WEB_DIR="$REPO_ROOT/src/GalaxyNG.Web"
 BOT_DIR="$REPO_ROOT/src/GalaxyNG.Bot"
-GAMES_DIR="${HOME}/.galaxyng/games"
 
 expand_home() {
   local p="$1"
@@ -130,6 +132,29 @@ expand_home() {
 
 normalize_provider() {
   echo "$1" | tr '[:upper:]' '[:lower:]'
+}
+
+bot_name_index() {
+  local name="$1"
+  for i in "${!_BASE_NAMES[@]}"; do
+    if [[ "${_BASE_NAMES[$i]}" == "$name" ]]; then
+      echo "$i"
+      return 0
+    fi
+  done
+  if [[ "$name" =~ ^Bot([0-9]+)$ ]]; then
+    echo "$((BASH_REMATCH[1] - 1))"
+    return 0
+  fi
+  return 1
+}
+
+bot_password_for_name() {
+  local name="$1"
+  local offset="$2"
+  local idx
+  idx="$(bot_name_index "$name")" || return 1
+  echo "pw$((idx + 1 + offset))"
 }
 
 resolve_llm_runtime() {
@@ -238,8 +263,8 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-# ── Шаг 0: остановить старые процессы и/или удалить игры ─────────────────────
-if $DO_KILL || $DO_CLEAN; then
+# ── Шаг 0: остановить старые процессы ────────────────────────────────────────
+if $DO_KILL; then
   echo ""
   echo -e "${RED}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
 fi
@@ -282,18 +307,7 @@ if $DO_KILL; then
   fi
 fi
 
-if $DO_CLEAN; then
-  info "Шаг 0б — Удаляем сохранённые игры…"
-  if [[ -d "$GAMES_DIR" ]]; then
-    GAME_COUNT=$(find "$GAMES_DIR" -maxdepth 1 -mindepth 1 -type d 2>/dev/null | wc -l | tr -d ' ')
-    rm -rf "$GAMES_DIR"
-    ok "Удалено игр: $GAME_COUNT (${GAMES_DIR})"
-  else
-    warn "Папка игр не найдена — уже чисто"
-  fi
-fi
-
-if $DO_KILL || $DO_CLEAN; then
+if $DO_KILL; then
   echo -e "${RED}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
   echo ""
 fi
@@ -388,35 +402,56 @@ print(games[0]['id'])
 " 2>/dev/null || echo "")
 
   if [[ -n "$GAME_ID" ]]; then
-    # Получаем список игроков через spectate
-    SPECTATE=$(curl -sf "$SERVER_URL/api/games/$GAME_ID/spectate" 2>/dev/null || echo "{}")
-    TURN=$(echo "$SPECTATE" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('turn',0))" 2>/dev/null || echo "0")
-    # Собираем ботов из игры (имена)
-    BOT_NAMES_IN_GAME=$(echo "$SPECTATE" | python3 -c "
+    GAME_DETAIL=$(curl -sf "$SERVER_URL/api/games/$GAME_ID" 2>/dev/null || echo "{}")
+    TURN=$(echo "$GAME_DETAIL" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('turn',0))" 2>/dev/null || echo "0")
+    IS_FINISHED=$(echo "$GAME_DETAIL" | python3 -c "import sys,json; d=json.load(sys.stdin); print('true' if d.get('isFinished') else 'false')" 2>/dev/null || echo "false")
+
+    GAME_NAME=$(echo "$GAME_DETAIL" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('name','Demo'))" 2>/dev/null || echo "Demo")
+    MAX_TURNS=$(echo "$GAME_DETAIL" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('maxTurns',60))" 2>/dev/null || echo "60")
+    GALAXY_SIZE=$(echo "$GAME_DETAIL" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('galaxySize') or '')" 2>/dev/null || echo "")
+
+    ALL_NAMES=(); ALL_PWS=(); BOT_NAMES=(); BOT_PWS=()
+    BOTS_ONLY=true
+    while IFS=$'\t' read -r player_name is_bot; do
+      [[ -z "$player_name" ]] && continue
+      ALL_NAMES+=("$player_name")
+      if [[ "$is_bot" == "1" ]]; then
+        BOT_NAMES+=("$player_name")
+      else
+        BOTS_ONLY=false
+      fi
+    done < <(echo "$GAME_DETAIL" | python3 -c "
 import sys, json
 d = json.load(sys.stdin)
-bots = [p['name'] for p in d.get('players', []) if p.get('isBot')]
-print(' '.join(bots))
-" 2>/dev/null || echo "")
+for p in d.get('players', []):
+    print(f\"{p.get('name','')}\t{1 if p.get('isBot') else 0}\")
+")
 
-    # Сопоставляем ботов из игры с пулом паролей
-    BOT_NAMES=(); BOT_PWS=()
-    for bot_name in $BOT_NAMES_IN_GAME; do
-      for i in "${!BOT_NAME_POOL[@]}"; do
-        if [[ "${BOT_NAME_POOL[$i]}" == "$bot_name" ]]; then
-          BOT_NAMES+=("$bot_name")
-          if $BOTS_ONLY; then
-            BOT_PWS+=("${BOT_PW_POOL[$i]}")
-          else
-            BOT_PWS+=("${BOT_PW_POOL[$((i+1))]}")
-          fi
-          break
+    PASSWORD_OFFSET=0
+    $BOTS_ONLY || PASSWORD_OFFSET=1
+    HUMAN_ASSIGNED=false
+    for player_name in "${ALL_NAMES[@]}"; do
+      if [[ " ${BOT_NAMES[*]} " == *" ${player_name} "* ]]; then
+        pw="$(bot_password_for_name "$player_name" "$PASSWORD_OFFSET")"
+        ALL_PWS+=("$pw")
+        BOT_PWS+=("$pw")
+      else
+        if ! $HUMAN_ASSIGNED; then
+          ALL_PWS+=("$HUMAN_PW")
+          HUMAN_ASSIGNED=true
+        else
+          ALL_PWS+=("$HUMAN_PW")
         fi
-      done
+      fi
     done
 
-    RESUMED=true
-    ok "Возобновляем игру $GAME_ID (ход $TURN, ботов: ${#BOT_NAMES[@]})"
+    if $IS_FINISHED; then
+      warn "Последняя игра $GAME_ID завершена — создаём новую с теми же параметрами"
+      GAME_ID=""
+    else
+      RESUMED=true
+      ok "Возобновляем игру $GAME_ID (ход $TURN, ботов: ${#BOT_NAMES[@]})"
+    fi
   else
     warn "Сохранённых игр нет — создаём новую"
   fi

@@ -7,11 +7,15 @@ public sealed record BotStrategy(
     string Id,
     string Name,
     string Prompt,
-    string CommanderCues);
+    string CommanderCues,
+    string? ModifierId = null,
+    string? ModifierName = null,
+    string? ModifierPrompt = null);
 
 public static class BotStrategyCatalog
 {
     private static readonly Lazy<IReadOnlyList<BotStrategy>> _all = new(LoadStrategies);
+    private static readonly Lazy<IReadOnlyList<(string Id, string Name, string Prompt)>> _modifiers = new(LoadModifiers);
 
     public static IReadOnlyList<BotStrategy> All => _all.Value;
 
@@ -22,7 +26,7 @@ public static class BotStrategyCatalog
             var exact = All.FirstOrDefault(s => s.Id.Equals(preferredId, StringComparison.OrdinalIgnoreCase));
             if (exact is not null)
             {
-                return exact;
+                return WithModifier(exact, gameId, raceName);
             }
         }
 
@@ -34,11 +38,36 @@ public static class BotStrategyCatalog
         var seedText = $"{gameId}:{raceName}";
         var seed = Math.Abs(StringComparer.OrdinalIgnoreCase.GetHashCode(seedText));
         var idx = seed % All.Count;
-        return All[idx];
+        return WithModifier(All[idx], gameId, raceName);
+    }
+
+    private static BotStrategy WithModifier(BotStrategy strategy, string gameId, string raceName)
+    {
+        var modifiers = _modifiers.Value;
+        if (modifiers.Count == 0)
+        {
+            return strategy;
+        }
+
+        var seedText = $"{gameId}:{raceName}:mod";
+        var seed = Math.Abs(StringComparer.OrdinalIgnoreCase.GetHashCode(seedText));
+        var mod = modifiers[(int)(seed % (uint)modifiers.Count)];
+        return strategy with { ModifierId = mod.Id, ModifierName = mod.Name, ModifierPrompt = mod.Prompt };
     }
 
     public static string BuildStrategyUserHint(BotStrategy strategy)
-        => $"Strategy profile ({strategy.Name}):\n{strategy.Prompt}";
+    {
+        var sb = new StringBuilder();
+        sb.AppendLine($"Strategy profile ({strategy.Name}):");
+        sb.AppendLine(strategy.Prompt);
+        if (!string.IsNullOrWhiteSpace(strategy.ModifierPrompt))
+        {
+            sb.AppendLine();
+            sb.AppendLine($"Behavioral modifier ({strategy.ModifierName}):");
+            sb.Append(strategy.ModifierPrompt);
+        }
+        return sb.ToString();
+    }
 
     private static IReadOnlyList<BotStrategy> LoadStrategies()
     {
@@ -73,6 +102,39 @@ public static class BotStrategyCatalog
         catch
         {
             return [Fallback()];
+        }
+    }
+
+    private static IReadOnlyList<(string Id, string Name, string Prompt)> LoadModifiers()
+    {
+        try
+        {
+            var baseDir = Path.Combine(AppContext.BaseDirectory, "Prompts", "Modifiers");
+            if (!Directory.Exists(baseDir))
+            {
+                return [];
+            }
+
+            var items = new List<(string, string, string)>();
+            foreach (var file in Directory.GetFiles(baseDir, "*.md", SearchOption.TopDirectoryOnly)
+                         .OrderBy(Path.GetFileName, StringComparer.OrdinalIgnoreCase))
+            {
+                var text = File.ReadAllText(file, Encoding.UTF8).Trim();
+                if (string.IsNullOrWhiteSpace(text))
+                {
+                    continue;
+                }
+
+                var id = Path.GetFileNameWithoutExtension(file);
+                var name = ExtractTitle(text) ?? ToTitleCase(id);
+                items.Add((id, name, text));
+            }
+
+            return items;
+        }
+        catch
+        {
+            return [];
         }
     }
 

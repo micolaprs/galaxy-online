@@ -267,8 +267,16 @@ public sealed class BotAgent(
     public async Task RunLoopAsync(CancellationToken ct = default)
     {
         int lastTurn = -1;
-        logger.LogInformation("🧩 [{Race}] Стратегия бота: {StrategyId} — {StrategyName}",
-            config.RaceName, _strategy.Id, _strategy.Name);
+        if (_strategy.ModifierName is not null)
+        {
+            logger.LogInformation("🧩 [{Race}] Стратегия бота: {StrategyId} — {StrategyName} + [{ModId}] {ModName}",
+                config.RaceName, _strategy.Id, _strategy.Name, _strategy.ModifierId, _strategy.ModifierName);
+        }
+        else
+        {
+            logger.LogInformation("🧩 [{Race}] Стратегия бота: {StrategyId} — {StrategyName}",
+                config.RaceName, _strategy.Id, _strategy.Name);
+        }
         logger.LogInformation("🚀 [{Race}] Бот подключился к игре {Game}", config.RaceName, config.GameId);
         await PostBotStatusAsync("idle", "ожидание первого хода", ct);
 
@@ -367,7 +375,7 @@ public sealed class BotAgent(
         CancellationToken ct)
     {
         var client = await GetMcpClientAsync(ct);
-        CallToolResponse result;
+        CallToolResult result;
         try
         {
             result = await client.CallToolAsync(toolName, args, cancellationToken: ct);
@@ -1283,6 +1291,21 @@ public sealed class BotAgent(
         if (turn >= 2 && turn % 3 == 0 && context.PrivateContacts.Count > 0)
         {
             var allies = ParseAlliesFromReport(report);
+
+            // If all known contacts are allied, force war on the one we've messaged least
+            // to prevent permanent 3-way peace stalemate.
+            bool allAllied = context.PrivateContacts.Count > 0 &&
+                             context.PrivateContacts.All(c => allies.Contains(c, StringComparer.OrdinalIgnoreCase));
+            if (allAllied && turn >= 10 && turn % 6 == 0)
+            {
+                var warTarget = context.PrivateContacts
+                    .OrderBy(c => (context.Signals.GetValueOrDefault(c)?.MyMessages ?? 0) + (context.Signals.GetValueOrDefault(c)?.TheirMessages ?? 0))
+                    .First();
+                result = $"{result}\nw {warTarget}";
+                logger.LogInformation("⚔️ [{Race}] Принудительное объявление войны расе {Target} (все были в союзе)", config.RaceName, warTarget);
+                return result;
+            }
+
             var target = context.PrivateContacts
                 .Where(c => !allies.Contains(c, StringComparer.OrdinalIgnoreCase))
                 .OrderByDescending(c => ScoreDiplomaticTarget(context.Signals.GetValueOrDefault(c), turn))

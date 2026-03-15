@@ -20,6 +20,8 @@ public static class StrategyPrompt
         - You can declare war: `w <race>`.
         - Use diplomacy as strategy, not flavor text: negotiate, bluff, coordinate timing, isolate enemies.
         - Your race must keep a distinct diplomatic style consistent with selected strategy.
+        - HARD RULE: You MUST NEVER be allied with ALL other players simultaneously. Always keep at least one enemy.
+        - HARD RULE: Alliances should be short tactical tools (8-12 turns max), not permanent peace pacts. Let alliances expire.
 
         Priority logic per turn:
         1. Exploration and expansion:
@@ -44,6 +46,8 @@ public static class StrategyPrompt
            - By midgame, your orders should include a clear conflict trajectory against at least one rival.
            - Midgame standard: maintain Fighter production on at least one core world, unless your economy is critically collapsing.
            - War declarations must be backed by fleet motion; avoid empty symbolic wars.
+           - CRITICAL: If you are at war with a race, you MUST route at least one combat group (with weapons > 0) to one of their ALIEN PLANETS listed in the report. Sending warships only to neutral planets while at war is FORBIDDEN.
+           - CRITICAL: If you have been allied with ALL other players for 3+ consecutive turns, you MUST declare war on the weakest one this turn.
 
         Canonical command syntax (one per line):
         p <planet> <CAP|MAT|DRIVE|WEAPONS|SHIELDS|CARGO|shiptype>

@@ -1,9 +1,10 @@
 import './style.css';
-import { Lobby }    from './components/Lobby.js';
-import { GameView } from './components/GameView.js';
-import { GameList } from './components/GameList.js';
-import { WatchView } from './components/WatchView.js';
-import { QuakeConsole } from './components/QuakeConsole.js';
+import { Lobby }          from './components/Lobby.js';
+import { GameView }       from './components/GameView.js';
+import { GameList }       from './components/GameList.js';
+import { WatchView }      from './components/WatchView.js';
+import { GameReplayView } from './components/GameReplayView.js';
+import { QuakeConsole }   from './components/QuakeConsole.js';
 import { loadSession, saveSession, sessionFromUrl } from './api/session.js';
 import type { Session } from './types/api.js';
 
@@ -18,9 +19,18 @@ function mount(view: { destroy(): void }): void {
 function showGameList(): void {
   app.innerHTML = '';
   const list = new GameList(app);
-  list.onWatch   = (id) => showWatchView(id);
-  list.onNewGame = () => showLobby();
+  list.onWatch   = (id)   => showWatchView(id);
+  list.onNewGame = ()     => showLobby();
+  list.onReplay  = (data) => showReplayView(data);
   mount(list);
+  history.pushState({}, '', '/');
+}
+
+function showReplayView(rawData: unknown): void {
+  app.innerHTML = '';
+  const rv = new GameReplayView(app, rawData);
+  rv.onBack = () => showGameList();
+  mount(rv);
   history.pushState({}, '', '/');
 }
 

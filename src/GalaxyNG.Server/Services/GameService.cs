@@ -239,6 +239,7 @@ public sealed class GameService(
                 .Select(b => $"{b.AttackerRace} бомбардировал {b.PlanetName}" +
                              (b.PreviousOwner != null ? $" (был {b.PreviousOwner})" : ""))
                 .ToList();
+            histEntry.BattleRecords = new List<BattleRecord>(game.Battles);
             game.TurnHistory.Add(histEntry);
             var historyTurn = histEntry.Turn;
             var summaryTurn = game.Turn;

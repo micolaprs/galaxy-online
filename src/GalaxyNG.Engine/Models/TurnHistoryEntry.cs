@@ -19,4 +19,7 @@ public sealed class TurnHistoryEntry
 
     /// <summary>Human-readable bombing descriptions.</summary>
     public List<string> Bombings { get; set; } = [];
+
+    /// <summary>Full battle records with shot protocol for replay visualisation.</summary>
+    public List<BattleRecord> BattleRecords { get; set; } = [];
 }

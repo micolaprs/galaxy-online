@@ -5,8 +5,9 @@ export class GameList {
   private el: HTMLElement;
   private pollTimer: number | null = null;
 
-  onWatch?:  (gameId: string) => void;
+  onWatch?:   (gameId: string) => void;
   onNewGame?: () => void;
+  onReplay?:  (rawData: unknown) => void;
 
   constructor(container: HTMLElement) {
     this.el = container;
@@ -25,6 +26,8 @@ export class GameList {
         <div class="gl-header">
           <span class="logo-sm">🌌 GalaxyNG</span>
           <button class="btn btn-primary" id="btn-new-game">+ New Game</button>
+          <button class="btn btn-sm btn-secondary" id="btn-load-replay" title="Загрузить game.json для просмотра реплея">📂 Реплей</button>
+          <input type="file" id="gl-file-input" accept=".json" style="display:none">
           <button class="btn btn-sm btn-danger" id="btn-clear-games" title="Delete all saved games">🗑 Clear all</button>
         </div>
         <div class="gl-body">
@@ -39,6 +42,10 @@ export class GameList {
       .addEventListener('click', () => this.onNewGame?.());
     this.el.querySelector('#btn-clear-games')!
       .addEventListener('click', () => this.clearAllGames());
+    this.el.querySelector('#btn-load-replay')!
+      .addEventListener('click', () => (this.el.querySelector('#gl-file-input') as HTMLInputElement).click());
+    (this.el.querySelector('#gl-file-input') as HTMLInputElement)
+      .addEventListener('change', (ev) => void this.loadReplayFile(ev));
   }
 
   private async clearAllGames(): Promise<void> {
@@ -52,6 +59,20 @@ export class GameList {
     } finally {
       btn.disabled = false;
     }
+  }
+
+  private async loadReplayFile(ev: Event): Promise<void> {
+    const file = (ev.target as HTMLInputElement).files?.[0];
+    if (!file) return;
+    try {
+      const text = await file.text();
+      const data = JSON.parse(text) as unknown;
+      this.onReplay?.(data);
+    } catch (e) {
+      alert(`Не удалось прочитать файл: ${e}`);
+    }
+    // Reset so the same file can be re-selected later
+    (ev.target as HTMLInputElement).value = '';
   }
 
   private async refresh(): Promise<void> {

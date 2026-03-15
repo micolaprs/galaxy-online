@@ -3,7 +3,10 @@ import { ensureConnected } from '../api/hub.js';
 import type {
   SpectateData, SpectatePlayer, SpectateBattle, SpectateBombing, SpectatePlanet,
   BotStatusEvent, TechLevels, SpectateChatMessage, SpectatePrivateChat, FinalGameReport,
+  TurnHistoryEntry, BattleSummary, BattleRecordDetail,
 } from '../types/api.js';
+import { BattleVisualizer } from './BattleVisualizer.js';
+import { BombingVisualizer } from './BombingVisualizer.js';
 import {
   GalaxyMapThree,
   type ThreeCombatEvents,
@@ -17,11 +20,13 @@ import { QuakeConsole } from './QuakeConsole.js';
 import { sanitizeUiText } from '../utils/uiText.js';
 import type { HubConnection } from '@microsoft/signalr';
 
-interface TurnEvent {
+interface CombatEntry {
   turn: number;
   at: string;
-  battles: SpectateBattle[];
+  battles: BattleSummary[];
+  battlesRaw: SpectateBattle[];      // from live spectate (current turn)
   bombings: SpectateBombing[];
+  bombingStrings: string[];          // fallback narrative strings from history
 }
 
 // Fixed palette for player colors (up to 8 players)
@@ -43,7 +48,8 @@ export class WatchView {
   private currentTurn = -1;
   private playerColorMap = new Map<string, string>();
   private playerTechMap = new Map<string, TechLevels>();
-  private turnLog: TurnEvent[] = [];
+  private combatLog: CombatEntry[] = [];
+  private historyLoaded = false;
   private botStatuses = new Map<string, BotStatusEvent>();
   private hub: HubConnection | null = null;
   private lastData: SpectateData | null = null;
@@ -58,6 +64,8 @@ export class WatchView {
   private lastPrivateChats: import('../types/api.js').SpectatePrivateChat[] = [];
   private finalReport: FinalGameReport | null = null;
   private finalReportAutoOpened = false;
+  private activeVisualizer: BattleVisualizer | null = null;
+  private activeBombingVisualizer: BombingVisualizer | null = null;
 
   onBack?: () => void;
 
@@ -75,6 +83,7 @@ export class WatchView {
     this.map?.destroy();
     this.planetPanel?.destroy();
     if (this.hub) void this.hub.invoke('LeaveGameGroup', this.gameId).catch(() => {});
+    this.activeBombingVisualizer?.destroy();
   }
 
   // ---- Hub ----
@@ -160,6 +169,15 @@ export class WatchView {
           </div>
         </div>
       </div>
+      <div class="wv-battle-overlay hidden" id="wv-battle-overlay">
+        <div class="wv-battle-modal">
+          <div class="wv-battle-modal-head">
+            <span class="wv-battle-modal-title" id="wv-battle-title">Сражение</span>
+            <button class="btn-close" id="wv-battle-close">×</button>
+          </div>
+          <div class="wv-battle-modal-body" id="wv-battle-body"></div>
+        </div>
+      </div>
       <div class="wv-final-overlay hidden" id="wv-final-overlay">
         <div class="wv-final-modal">
           <div class="wv-final-head">
@@ -222,6 +240,10 @@ export class WatchView {
     this.el.querySelector('#wv-final-overlay')!.addEventListener('click', (ev) => {
       if (ev.target === ev.currentTarget) this.closeFinalReport();
     });
+    this.el.querySelector('#wv-battle-close')!.addEventListener('click', () => this.closeBattleVisualizer());
+    this.el.querySelector('#wv-battle-overlay')!.addEventListener('click', (ev) => {
+      if (ev.target === ev.currentTarget) this.closeBattleVisualizer();
+    });
     this.el.querySelector('#wv-dip-toggle')!.addEventListener('click', () => this.toggleDiplomacyChat());
     this.el.querySelector('#wv-route-toggle')!.addEventListener('click', () => {
       this.showAllRoutes = !this.showAllRoutes;
@@ -250,13 +272,16 @@ export class WatchView {
 
       const turnChanged = data.turn !== this.currentTurn;
       if (turnChanged) {
-        this.recordTurnEvent(data);
+        this.recordLiveTurnEvent(data);
         this.map.triggerTurnCombatBursts({
           turn: data.turn,
           battlePlanets: data.battles.map(b => b.planetName),
           bombingPlanets: data.bombings.map(b => b.planetName),
         });
         this.currentTurn = data.turn;
+      }
+      if (!this.historyLoaded) {
+        void this.loadCombatHistory();
       }
       this.renderCombatIntel();
 
@@ -430,29 +455,50 @@ export class WatchView {
     this.applyRouteDisplayMode();
   }
 
-  private recordTurnEvent(data: SpectateData): void {
+  private recordLiveTurnEvent(data: SpectateData): void {
     if (data.turn === 0) return;
-    this.turnLog.unshift({
-      turn:     data.turn,
-      at:       data.lastTurnRunAt ?? new Date().toISOString(),
-      battles:  [...data.battles],
-      bombings: [...data.bombings],
-    });
-    if (this.turnLog.length > 20) this.turnLog.pop();
+    // Merge live spectate data into combatLog (current turn always uses live data)
+    const existing = this.combatLog.findIndex(e => e.turn === data.turn);
+    const entry: CombatEntry = {
+      turn:           data.turn,
+      at:             data.lastTurnRunAt ?? new Date().toISOString(),
+      battles:        data.battles.map(b => ({
+        planetName:  b.planetName,
+        winner:      b.winner,
+        participants: b.participants,
+        initialShips: b.initialShips ?? {},
+        shotCount:   b.protocol?.length ?? 0,
+      })),
+      battlesRaw:    [...data.battles],
+      bombings:      [...data.bombings],
+      bombingStrings: [],
+    };
+    if (existing >= 0) this.combatLog[existing] = entry;
+    else this.combatLog.unshift(entry);
+    this.combatLog.sort((a, b) => b.turn - a.turn);
+  }
+
+  private async loadCombatHistory(): Promise<void> {
+    this.historyLoaded = true;
+    try {
+      const history = await api.getHistory(this.gameId);
+      for (const h of history) {
+        if (this.combatLog.some(e => e.turn === h.turn)) continue; // live data takes priority
+        if (h.battleCount === 0 && h.bombingCount === 0) continue;
+        this.combatLog.push(fromHistoryEntry(h));
+      }
+      this.combatLog.sort((a, b) => b.turn - a.turn);
+      this.renderCombatIntel();
+    } catch {
+      // silently ignore — live session data is still shown
+    }
   }
 
   private renderCombatIntel(): void {
     const tab = this.el.querySelector<HTMLElement>('#tab-combat');
     if (!tab) return;
 
-    if (this.turnLog.length === 0) {
-      tab.innerHTML = '<div class="wv-combat-empty">Пока нет завершённых ходов с боевыми событиями.</div>';
-      return;
-    }
-
-    const entries = this.turnLog
-      .filter(entry => entry.battles.length > 0 || entry.bombings.length > 0)
-      .slice(0, 20);
+    const entries = this.combatLog.filter(e => e.battles.length > 0 || e.bombings.length > 0).slice(0, 30);
 
     if (entries.length === 0) {
       tab.innerHTML = '<div class="wv-combat-empty">Сражений и бомбардировок пока не зафиксировано.</div>';
@@ -460,30 +506,56 @@ export class WatchView {
     }
 
     tab.innerHTML = entries.map(entry => {
-      const battles = entry.battles.map(b => {
-        const participants = b.participants.length > 0 ? b.participants.join(' vs ') : 'неизвестные участники';
-        const participantBadges = b.participants.map(p => {
-          const color = [...this.playerColorMap.entries()].find(([, v]) => v && this.lastData?.players.find(pl => pl.name === p && this.playerColorMap.get(pl.id) === v))?.[1] ?? '#94a3b8';
+      const battleCards = entry.battles.map(b => {
+        const badges = b.participants.map(p => {
+          const color = this.colorForRace(p);
           return `<span class="wv-combat-badge" style="border-color:${esc(color)}">${esc(p)}</span>`;
         }).join('');
+        const initCounts = Object.entries(b.initialShips)
+          .map(([r, n]) => `${esc(r)}:${n}`)
+          .join(' vs ');
+        const replayBtn = b.shotCount > 0
+          ? `<button class="bv-replay-btn" data-turn="${entry.turn}" data-planet="${esc(b.planetName)}">▶ Реплей (${b.shotCount} выстр.)</button>`
+          : '';
         return `
-          <div class="wv-combat-event battle wv-combat-clickable" data-planet="${esc(b.planetName)}">
+          <div class="wv-combat-event battle">
             <div class="wv-combat-kind">⚔ Орбитальный бой</div>
-            <div class="wv-combat-main">${esc(b.planetName)} <span class="wv-combat-nav-hint">→ на карте</span></div>
-            <div class="wv-combat-badges">${participantBadges || esc(participants)}</div>
-            <div class="wv-combat-sub winner">🏆 Победитель: ${esc(b.winner)}</div>
+            <div class="wv-combat-main wv-combat-clickable" data-planet="${esc(b.planetName)}">
+              ${esc(b.planetName)} <span class="wv-combat-nav-hint">→ на карте</span>
+            </div>
+            <div class="wv-combat-badges">${badges}</div>
+            ${initCounts ? `<div class="wv-combat-sub">${initCounts}</div>` : ''}
+            <div class="wv-combat-sub winner">🏆 ${esc(b.winner === 'Draw' ? 'Ничья' : b.winner)}</div>
+            ${replayBtn}
           </div>
         `;
       }).join('');
 
-      const bombings = entry.bombings.map(b => `
-        <div class="wv-combat-event bombing wv-combat-clickable" data-planet="${esc(b.planetName)}">
-          <div class="wv-combat-kind">💥 Бомбардировка</div>
-          <div class="wv-combat-main">${esc(b.planetName)} <span class="wv-combat-nav-hint">→ на карте</span></div>
-          <div class="wv-combat-sub">Атакующий: ${esc(b.attackerRace)}</div>
-          <div class="wv-combat-sub">${esc(b.previousOwner ? `Владелец до удара: ${b.previousOwner}` : 'Ранее нейтральная цель')}</div>
-        </div>
-      `).join('');
+      const bombingCards = entry.bombings.map(b => {
+        const attackerColor = this.colorForRace(b.attackerRace);
+        return `
+          <div class="wv-combat-event bombing">
+            <div class="wv-combat-kind">💥 Бомбардировка</div>
+            <div class="wv-combat-main wv-combat-clickable" data-planet="${esc(b.planetName)}">
+              ${esc(b.planetName)} <span class="wv-combat-nav-hint">→ на карте</span>
+            </div>
+            <div class="wv-combat-sub">Атакующий: ${esc(b.attackerRace)}</div>
+            <div class="wv-combat-sub">${esc(b.previousOwner ? `Владелец до удара: ${b.previousOwner}` : 'Ранее нейтральная цель')}</div>
+            <button class="bv-replay-btn bv-bombing-btn"
+              data-planet="${esc(b.planetName)}"
+              data-attacker="${esc(b.attackerRace)}"
+              data-color="${esc(attackerColor)}"
+              data-prev-owner="${esc(b.previousOwner ?? '')}"
+              data-pop="${b.oldPopulation ?? ''}"
+              >💥 Анимация бомбардировки</button>
+          </div>
+        `;
+      }).join('');
+
+      // Fallback string-based bombings (historical without structured data)
+      const bombingFallback = entry.bombingStrings.length > 0 && entry.bombings.length === 0
+        ? entry.bombingStrings.map(s => `<div class="wv-combat-event bombing"><div class="wv-combat-sub">${esc(s)}</div></div>`).join('')
+        : '';
 
       return `
         <section class="wv-combat-turn">
@@ -491,21 +563,125 @@ export class WatchView {
             <span class="wv-combat-turn-no">Ход ${entry.turn}</span>
             <span class="wv-combat-turn-time">${esc(new Date(entry.at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }))}</span>
           </div>
-          <div class="wv-combat-events">${battles}${bombings}</div>
+          ${entry.battles.length > 0 ? `<div class="wv-combat-section-label">⚔ Сражения</div>` : ''}
+          <div class="wv-combat-events">${battleCards}</div>
+          ${(entry.bombings.length > 0 || bombingFallback) ? `<div class="wv-combat-section-label">💥 Бомбардировки</div>` : ''}
+          <div class="wv-combat-events">${bombingCards}${bombingFallback}</div>
         </section>
       `;
     }).join('');
 
-    // Add click handlers
+    // Planet nav click handlers
     tab.querySelectorAll<HTMLElement>('.wv-combat-clickable').forEach(el => {
       el.addEventListener('click', () => {
         const planet = el.dataset['planet'];
-        if (planet) {
-          this.navigateToPlanet(planet);
-          // Switch to map view by switching right tab away if needed
-        }
+        if (planet) this.navigateToPlanet(planet);
       });
     });
+
+    // Replay button handlers
+    tab.querySelectorAll<HTMLElement>('.bv-replay-btn:not(.bv-bombing-btn)').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const turn   = parseInt(btn.dataset['turn']  ?? '0');
+        const planet = btn.dataset['planet'] ?? '';
+        void this.openBattleVisualizer(turn, planet);
+      });
+    });
+
+    // Bombing animation button handlers
+    tab.querySelectorAll<HTMLElement>('.bv-bombing-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        this.openBombingVisualizer({
+          planetName:    btn.dataset['planet'] ?? '',
+          attackerRace:  btn.dataset['attacker'] ?? '',
+          previousOwner: btn.dataset['prevOwner'] || null,
+          attackerColor: btn.dataset['color'] ?? '#94a3b8',
+          oldPopulation: btn.dataset['pop'] ? parseFloat(btn.dataset['pop']!) : undefined,
+        });
+      });
+    });
+  }
+
+  private colorForRace(raceName: string): string {
+    const entry = this.lastData?.players.find(p => p.name === raceName);
+    return entry ? (this.playerColorMap.get(entry.id) ?? '#94a3b8') : '#94a3b8';
+  }
+
+  private async openBattleVisualizer(turn: number, planetName: string): Promise<void> {
+    // Try live spectate data first (current turn)
+    let record: BattleRecordDetail | null = null;
+    const liveEntry = this.combatLog.find(e => e.turn === turn);
+    if (liveEntry) {
+      const raw = liveEntry.battlesRaw.find(b => b.planetName === planetName);
+      if (raw?.protocol && raw.protocol.length > 0) {
+        record = {
+          planetName: raw.planetName,
+          winner:     raw.winner,
+          participants: raw.participants,
+          protocol:   raw.protocol,
+          initialShips: raw.initialShips ?? {},
+        };
+      }
+    }
+
+    // Otherwise fetch from history endpoint
+    if (!record) {
+      try {
+        const records = await api.getTurnBattleRecords(this.gameId, turn);
+        record = records.find(r => r.planetName === planetName) ?? null;
+      } catch {
+        // silently fail
+      }
+    }
+
+    if (!record || record.protocol.length === 0) {
+      // No protocol available (old game data)
+      return;
+    }
+
+    this.closeBattleVisualizer();
+    this.activeVisualizer = new BattleVisualizer(record, this.playerColorMap);
+
+    const overlay = this.el.querySelector<HTMLElement>('#wv-battle-overlay')!;
+    const body    = this.el.querySelector<HTMLElement>('#wv-battle-body')!;
+    const title   = this.el.querySelector<HTMLElement>('#wv-battle-title')!;
+
+    title.textContent = `Сражение · Ход ${turn}`;
+    body.innerHTML = '';
+    body.appendChild(this.activeVisualizer.element);
+    overlay.classList.remove('hidden');
+  }
+
+  private closeBattleVisualizer(): void {
+    this.activeVisualizer?.destroy();
+    this.activeVisualizer = null;
+    this.activeBombingVisualizer?.destroy();
+    this.activeBombingVisualizer = null;
+    const overlay = this.el.querySelector<HTMLElement>('#wv-battle-overlay');
+    overlay?.classList.add('hidden');
+    const body = this.el.querySelector<HTMLElement>('#wv-battle-body');
+    if (body) body.innerHTML = '';
+  }
+
+  private openBombingVisualizer(data: import('./BombingVisualizer.js').BombingData): void {
+    // Close any existing visualizers without triggering recursive calls
+    this.activeVisualizer?.destroy();
+    this.activeVisualizer = null;
+    this.closeBombingVisualizer();
+    const viz = new BombingVisualizer(data);
+    this.activeBombingVisualizer = viz;
+    const overlay = this.el.querySelector<HTMLElement>('#wv-battle-overlay')!;
+    const body    = this.el.querySelector<HTMLElement>('#wv-battle-body')!;
+    const title   = this.el.querySelector<HTMLElement>('#wv-battle-title')!;
+    title.textContent = `Бомбардировка · ${data.planetName}`;
+    body.innerHTML = '';
+    body.appendChild(viz.element);
+    overlay.classList.remove('hidden');
+  }
+
+  private closeBombingVisualizer(): void {
+    this.activeBombingVisualizer?.destroy();
+    this.activeBombingVisualizer = null;
   }
 
   private async runTurn(): Promise<void> {
@@ -735,6 +911,55 @@ export class WatchView {
     if (!overlay) return;
     overlay.classList.add('hidden');
   }
+}
+
+function fromHistoryEntry(h: TurnHistoryEntry): CombatEntry {
+  // Convert server history entry to unified CombatEntry
+  const battles: import('../types/api.js').BattleSummary[] =
+    (h.battleSummaries ?? []).map(b => ({
+      planetName:   b.planetName,
+      winner:       b.winner,
+      participants: b.participants,
+      initialShips: b.initialShips ?? {},
+      shotCount:    b.shotCount ?? 0,
+    }));
+
+  // Fallback: parse narrative strings into minimal structured data when battleSummaries not available
+  // (for old game data that predates this feature)
+  if (battles.length === 0 && h.battleCount > 0) {
+    for (const s of h.battles) {
+      const m = s.match(/Битва при (.+?): (.+?) → (.+?) побеждает/);
+      if (m) {
+        battles.push({
+          planetName:   m[1]!,
+          winner:       m[3]!,
+          participants: m[2]!.split(' vs '),
+          initialShips: {},
+          shotCount:    0,
+        });
+      }
+    }
+  }
+
+  // Extract bombings from narrative strings (for old data)
+  const bombings: import('../types/api.js').SpectateBombing[] = [];
+  if (h.bombingCount > 0) {
+    for (const s of h.bombings) {
+      const m = s.match(/(.+?) бомбардировал (.+?)(?:\s+\(был (.+?)\))?$/);
+      if (m) {
+        bombings.push({ planetName: m[2]!, attackerRace: m[1]!, previousOwner: m[3] ?? null });
+      }
+    }
+  }
+
+  return {
+    turn:           h.turn,
+    at:             h.runAt,
+    battles,
+    battlesRaw:     [],
+    bombings,
+    bombingStrings: bombings.length === 0 ? h.bombings : [],
+  };
 }
 
 function timeAgo(iso: string): string {

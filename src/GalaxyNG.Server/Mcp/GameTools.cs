@@ -127,6 +127,10 @@ public sealed class GameTools(GameService svc)
                 unansweredMineStreak++;
             }
 
+            var allianceUntil = me.AllianceUntilTurn.GetValueOrDefault(other.Id, 0);
+            var isAlly = me.Allies.Contains(other.Id);
+            var isAtWar = me.AtWar.Contains(other.Id);
+
             contacts.Add(new
             {
                 race = other.Name,
@@ -137,6 +141,8 @@ public sealed class GameTools(GameService svc)
                 unansweredMineStreak,
                 lastSender = last?.SenderName,
                 lastTurn = last?.Turn,
+                diplomaticStatus = isAtWar ? "WAR" : isAlly ? "ALLY" : "NEUTRAL",
+                allianceUntilTurn = isAlly ? allianceUntil : (int?)null,
             });
         }
 

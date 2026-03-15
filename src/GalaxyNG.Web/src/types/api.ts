@@ -101,8 +101,29 @@ export interface SpectatePlanet {
   name: string; x: number; y: number;
   size: number; ownerId: string | null; population: number;
 }
-export interface SpectateBattle  { planetName: string; winner: string; participants: string[]; }
-export interface SpectateBombing { planetName: string; attackerRace: string; previousOwner: string | null; }
+export interface BattleShot { attackerRace: string; defenderRace: string; killed: boolean; }
+export interface SpectateBattle  {
+  planetName: string; winner: string; participants: string[];
+  protocol?: BattleShot[];
+  initialShips?: Record<string, number>;
+}
+export interface SpectateBombing {
+  planetName: string;
+  attackerRace: string;
+  previousOwner: string | null;
+  oldPopulation?: number;
+  oldIndustry?: number;
+}
+export interface BattleRecordDetail {
+  planetName: string; winner: string; participants: string[];
+  protocol: BattleShot[];
+  initialShips: Record<string, number>;
+}
+export interface BattleSummary {
+  planetName: string; winner: string; participants: string[];
+  initialShips: Record<string, number>;
+  shotCount: number;
+}
 export interface SpectateFleetRoute {
   ownerId: string;
   fleetName: string;
@@ -170,6 +191,7 @@ export interface TurnHistoryEntry {
   turn: number; runAt: string;
   players: string[]; battleCount: number; bombingCount: number;
   battles: string[]; bombings: string[];
+  battleSummaries?: BattleSummary[];
 }
 
 // Player's orders for a turn

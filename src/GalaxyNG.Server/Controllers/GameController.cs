@@ -295,12 +295,16 @@ public sealed class GameController(GameService svc) : ControllerBase
                 b.PlanetName,
                 b.Winner,
                 b.Participants,
+                Protocol = b.Protocol.Select(s => new { s.AttackerRace, s.DefenderRace, s.Killed }),
+                InitialShips = b.InitialShips,
             }),
             bombings = game.Bombings.Select(b => new
             {
                 b.PlanetName,
                 b.AttackerRace,
                 b.PreviousOwner,
+                b.OldPopulation,
+                b.OldIndustry,
             }),
             fleetRoutes,
             diplomacy = new
@@ -383,6 +387,14 @@ public sealed class GameController(GameService svc) : ControllerBase
                 bombingCount = h.Bombings.Count,
                 battles = h.Battles,
                 bombings = h.Bombings,
+                battleSummaries = h.BattleRecords.Select(b => new
+                {
+                    b.PlanetName,
+                    b.Winner,
+                    b.Participants,
+                    InitialShips = b.InitialShips,
+                    ShotCount = b.Protocol.Count,
+                }),
             }));
     }
 
@@ -419,6 +431,26 @@ public sealed class GameController(GameService svc) : ControllerBase
             battles = hist.Battles,
             bombings = hist.Bombings,
         });
+    }
+
+    // GET /api/games/{id}/history/{turn}/battles — full battle records with protocol for replay
+    [HttpGet("{id}/history/{turn}/battles")]
+    public async Task<IActionResult> GetTurnBattleRecords(string id, int turn, CancellationToken ct)
+    {
+        var game = await svc.GetGameAsync(id, ct);
+        if (game is null) return NotFound();
+
+        var hist = game.TurnHistory.FirstOrDefault(h => h.Turn == turn);
+        if (hist is null) return NotFound();
+
+        return Ok(hist.BattleRecords.Select(b => new
+        {
+            b.PlanetName,
+            b.Winner,
+            b.Participants,
+            Protocol = b.Protocol.Select(s => new { s.AttackerRace, s.DefenderRace, s.Killed }),
+            InitialShips = b.InitialShips,
+        }));
     }
 
     // POST /api/games/{id}/history/{turn}/player/{race}/summary — LLM turn summary

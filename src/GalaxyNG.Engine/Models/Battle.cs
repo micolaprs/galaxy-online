@@ -7,7 +7,12 @@ public sealed record BattleRecord(
     string Winner,       // race name or "Draw"
     List<string> Participants,
     List<BattleShot> Protocol
-);
+)
+{
+    /// <summary>Ship counts per race at the start of the battle, for replay visualisation.</summary>
+    public IReadOnlyDictionary<string, int> InitialShips { get; init; } =
+        new Dictionary<string, int>();
+};
 
 public sealed record BombingRecord(
     string PlanetName,

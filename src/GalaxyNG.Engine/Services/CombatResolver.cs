@@ -40,6 +40,11 @@ public sealed class CombatResolver(Random? rng = null)
             return null;
         }
 
+        // Capture initial ship counts before battle (for replay visualisation)
+        var initialShips = warships
+            .GroupBy(w => w.player.Name)
+            .ToDictionary(g => g.Key, g => g.Sum(x => x.group.Ships));
+
         // Build combatant list (one entry per ship — flattened)
         var combatants = BuildCombatants(warships, game);
         var protocol = new List<BattleShot>();
@@ -122,7 +127,8 @@ public sealed class CombatResolver(Random? rng = null)
             planetName,
             winner,
             [.. warships.Select(w => w.player.Name).Distinct()],
-            protocol);
+            protocol)
+        { InitialShips = initialShips };
     }
 
     // --- bombing ---
