@@ -26,12 +26,30 @@ DO_CLEAN_LOGS=false # по умолчанию: не очищаем логи
 LLM_PROVIDER="${GALAXYNG_BOT_LLM_PROVIDER:-openai/codex}"
 PROVIDER_AUTH_DIR="${GALAXYNG_OPENAI_CODEX_AUTH_DIR:-}"
 MAX_TURNS="${GALAXYNG_DEMO_MAX_TURNS:-60}"  # drives galaxy size (more turns = bigger galaxy)
+EXPLICIT_MAX_TURNS=false
+REQUESTED_GAME_ID=""
 STRICT_CODEX_DEFAULT=true
+RESUME_REQUESTED=false
+
+for arg in "$@"; do
+  if [[ "$arg" == "--resume" ]]; then
+    RESUME_REQUESTED=true
+    break
+  fi
+done
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     -b|--bots-only) BOTS_ONLY=true ; shift ;;
-    -n|--bots)      NUM_BOTS="$2"; shift 2 ;;
+    --bots)         NUM_BOTS="$2"; shift 2 ;;
+    -n)
+      if $RESUME_REQUESTED; then
+        MAX_TURNS="$2"
+        EXPLICIT_MAX_TURNS=true
+      else
+        NUM_BOTS="$2"
+      fi
+      shift 2 ;;
     -s|--size)      GALAXY_SIZE="$2"; shift 2 ;; # explicit override
     -o|--open)      OPEN_BROWSER=true;  shift ;;
     --no-open)      OPEN_BROWSER=false; shift ;;
@@ -39,12 +57,13 @@ while [[ $# -gt 0 ]]; do
     --no-kill)      DO_KILL=false; shift ;;
     --clean-logs)   DO_CLEAN_LOGS=true; shift ;;
     --no-clean-logs) DO_CLEAN_LOGS=false; shift ;;
-    --resume)       FORCE_NEW=false; shift ;;
+    --resume)       FORCE_NEW=false; RESUME_REQUESTED=true; shift ;;
     --new)          FORCE_NEW=true; shift ;;
     --openai-codex) LLM_PROVIDER="openai/codex"; shift ;;
     --provider)     LLM_PROVIDER="$2"; shift 2 ;;
     --auth-dir)     PROVIDER_AUTH_DIR="$2"; shift 2 ;;
-    --max-turns)    MAX_TURNS="$2"; shift 2 ;;
+    --game-id)      REQUESTED_GAME_ID="$2"; shift 2 ;;
+    --max-turns)    MAX_TURNS="$2"; EXPLICIT_MAX_TURNS=true; shift 2 ;;
     -h|--help)
       echo "Использование: $0 [опции]"
       echo ""
@@ -54,7 +73,9 @@ while [[ $# -gt 0 ]]; do
       echo "                        а если она завершена — создать новую с её же параметрами"
       echo "  --new                 Явно создать новую игру"
       echo "  -b, --bots-only       Все игроки — боты (без человека)"
-      echo "  -n, --bots NUM        Количество ботов (по умолчанию: 3)"
+      echo "  -n NUM                Количество ботов, если создаётся новая игра;"
+      echo "                        c --resume трактуется как maxTurns для совместимости"
+      echo "  --bots NUM            Количество ботов (по умолчанию: 3)"
       echo "  -s, --size SIZE       Размер галактики (по умолчанию: 200)"
       echo "  -o, --open            Открыть браузер после запуска (по умолчанию)"
       echo "  --no-open             Не открывать браузер"
@@ -65,6 +86,7 @@ while [[ $# -gt 0 ]]; do
       echo "  --openai-codex        Быстрый флаг: LLM-провайдер openai/codex"
       echo "  --provider NAME       LLM-провайдер: lmstudio | openai/codex"
       echo "  --auth-dir PATH       Путь к папке auth-файлов Codex (для openai/codex)"
+      echo "  --game-id ID          ID сохранённой игры для точного resume"
       echo "  --max-turns N         Лимит ходов игры (по умолчанию: 60)"
       echo ""
       echo "  Можно задавать через env:"
@@ -347,7 +369,12 @@ cd "$SERVER_DIR"
 if curl -sf "$SERVER_URL/api/games" > /dev/null 2>&1; then
   warn "Сервер уже работает на $SERVER_URL — используем существующий"
 else
+  SERVER_SKIP_STARTUP_AUTORUN="false"
+  if ! $FORCE_NEW; then
+    SERVER_SKIP_STARTUP_AUTORUN="true"
+  fi
   DOTNET_WATCH_RESTART_ON_RUDE_EDIT=true \
+  GALAXYNG_SKIP_STARTUP_AUTORUN="$SERVER_SKIP_STARTUP_AUTORUN" \
   Llm__Provider="$SERVER_LLM_PROVIDER" \
   Llm__BaseUrl="$SERVER_LLM_BASE_URL" \
   Llm__Model="$SERVER_LLM_MODEL" \
@@ -387,10 +414,14 @@ GAME_ID=""
 RESUMED=false
 
 if ! $FORCE_NEW; then
-  info "Шаг 3/5 — Ищем последнюю сохранённую игру…"
-  EXISTING=$(curl -sf "$SERVER_URL/api/games" 2>/dev/null || echo "[]")
-  # Выбираем игру с наибольшим lastTurnRunAt (или просто первую)
-  GAME_ID=$(echo "$EXISTING" | python3 -c "
+  if [[ -n "$REQUESTED_GAME_ID" ]]; then
+    info "Шаг 3/5 — Ищем сохранённую игру ${REQUESTED_GAME_ID}..."
+    GAME_ID="$REQUESTED_GAME_ID"
+  else
+    info "Шаг 3/5 — Ищем последнюю сохранённую игру…"
+    EXISTING=$(curl -sf "$SERVER_URL/api/games" 2>/dev/null || echo "[]")
+    # Выбираем игру с наибольшим lastTurnRunAt (или просто первую)
+    GAME_ID=$(echo "$EXISTING" | python3 -c "
 import sys, json
 games = json.load(sys.stdin)
 if not games:
@@ -400,14 +431,24 @@ if not games:
 games.sort(key=lambda g: g.get('lastTurnRunAt') or '', reverse=True)
 print(games[0]['id'])
 " 2>/dev/null || echo "")
+  fi
 
   if [[ -n "$GAME_ID" ]]; then
-    GAME_DETAIL=$(curl -sf "$SERVER_URL/api/games/$GAME_ID" 2>/dev/null || echo "{}")
+    if ! GAME_DETAIL=$(curl -sf "$SERVER_URL/api/games/$GAME_ID" 2>/dev/null); then
+      if [[ -n "$REQUESTED_GAME_ID" ]]; then
+        echo "Игра с id '$GAME_ID' не найдена." >&2
+        exit 1
+      fi
+      GAME_DETAIL="{}"
+    fi
     TURN=$(echo "$GAME_DETAIL" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('turn',0))" 2>/dev/null || echo "0")
     IS_FINISHED=$(echo "$GAME_DETAIL" | python3 -c "import sys,json; d=json.load(sys.stdin); print('true' if d.get('isFinished') else 'false')" 2>/dev/null || echo "false")
+    ALL_SUBMITTED=$(echo "$GAME_DETAIL" | python3 -c "import sys,json; d=json.load(sys.stdin); players=d.get('players', []); active=[p for p in players if not p.get('isEliminated')]; print('true' if active and all(p.get('submitted') for p in active) else 'false')" 2>/dev/null || echo "false")
 
     GAME_NAME=$(echo "$GAME_DETAIL" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('name','Demo'))" 2>/dev/null || echo "Demo")
-    MAX_TURNS=$(echo "$GAME_DETAIL" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('maxTurns',60))" 2>/dev/null || echo "60")
+    if ! $EXPLICIT_MAX_TURNS; then
+      MAX_TURNS=$(echo "$GAME_DETAIL" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('maxTurns',60))" 2>/dev/null || echo "60")
+    fi
     GALAXY_SIZE=$(echo "$GAME_DETAIL" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('galaxySize') or '')" 2>/dev/null || echo "")
 
     ALL_NAMES=(); ALL_PWS=(); BOT_NAMES=(); BOT_PWS=()
@@ -449,8 +490,20 @@ for p in d.get('players', []):
       warn "Последняя игра $GAME_ID завершена — создаём новую с теми же параметрами"
       GAME_ID=""
     else
+      if $EXPLICIT_MAX_TURNS; then
+        info "Обновляем лимит ходов у игры ${GAME_ID} -> ${MAX_TURNS}..."
+        curl -sf -X PATCH "$SERVER_URL/api/games/$GAME_ID/max-turns" \
+          -H "Content-Type: application/json" \
+          -d "$(printf '{"maxTurns":%d}' "$MAX_TURNS")" > /dev/null
+        ok "Лимит ходов обновлён: ${MAX_TURNS}"
+      fi
+      if [[ "$ALL_SUBMITTED" == "true" ]]; then
+        info "У игры ${GAME_ID} уже были сданы все приказы - запускаем отложенный ход после обновления лимита..."
+        curl -sf -X POST "$SERVER_URL/api/games/$GAME_ID/run-turn" > /dev/null
+        ok "Отложенный ход выполнен"
+      fi
       RESUMED=true
-      ok "Возобновляем игру $GAME_ID (ход $TURN, ботов: ${#BOT_NAMES[@]})"
+      ok "Возобновляем игру ${GAME_ID} (ход ${TURN}, ботов: ${#BOT_NAMES[@]}, лимит: ${MAX_TURNS})"
     fi
   else
     warn "Сохранённых игр нет — создаём новую"
