@@ -14,7 +14,8 @@ public sealed class GameService(
     ReportGenerator reporter,
     LlmService llm,
     IHubContext<GameHub> hub,
-    ILogger<GameService> logger)
+    ILogger<GameService> logger,
+    GameFileLogWriter gameLog)
 {
     // In-memory cache of active games
     private readonly ConcurrentDictionary<string, Game> _cache = new();
@@ -63,6 +64,7 @@ public sealed class GameService(
         finally { _lock.Release(); }
 
         logger.LogInformation("Created game {Id} '{Name}' with {Count} players", gameId, gameName, players.Count);
+        gameLog.Log(gameId, "Information", "GameService", $"Игра создана: '{gameName}', игроков: {players.Count}");
         return game;
     }
 
@@ -132,6 +134,59 @@ public sealed class GameService(
             _cache[gameId] = game;
             await store.SaveAsync(game, ct);
             logger.LogInformation("Updated max turns for game {Id}: {MaxTurns}", gameId, maxTurns);
+            gameLog.Log(gameId, "Information", "GameService", $"Обновлён лимит ходов: {maxTurns}");
+            return (true, null, game);
+        }
+        finally { _lock.Release(); }
+    }
+
+    public async Task<(bool ok, string? error, Game? game)> ReviveFinishedGameAsync(
+        string gameId, int maxTurns, bool autoRunOnAllSubmitted = true, CancellationToken ct = default)
+    {
+        if (maxTurns <= 0)
+        {
+            return (false, "Max turns must be positive.", null);
+        }
+
+        await _lock.WaitAsync(ct);
+        try
+        {
+            var game = _cache.GetValueOrDefault(gameId) ?? await store.LoadAsync(gameId, ct);
+            if (game is null)
+            {
+                return (false, "Game not found.", null);
+            }
+
+            if (!game.IsFinished)
+            {
+                game.MaxTurns = maxTurns;
+                game.AutoRunOnAllSubmitted = autoRunOnAllSubmitted;
+                _cache[gameId] = game;
+                await store.SaveAsync(game, ct);
+                return (true, null, game);
+            }
+
+            if (game.FinishReason is null || !game.FinishReason.StartsWith("Достигнут лимит ", StringComparison.Ordinal))
+            {
+                return (false, "Only games finished by max-turn limit can be revived.", null);
+            }
+
+            if (game.Turn >= maxTurns)
+            {
+                return (false, "New maxTurns must be greater than current turn for revive.", null);
+            }
+
+            game.MaxTurns = maxTurns;
+            game.IsFinished = false;
+            game.WinnerPlayerId = null;
+            game.WinnerName = null;
+            game.FinishReason = null;
+            game.AutoRunOnAllSubmitted = autoRunOnAllSubmitted;
+
+            _cache[gameId] = game;
+            await store.SaveAsync(game, ct);
+            logger.LogInformation("Revived finished game {Id} with new max turns {MaxTurns}", gameId, maxTurns);
+            gameLog.Log(gameId, "Information", "GameService", $"Игра возобновлена с новым лимитом ходов: {maxTurns}");
             return (true, null, game);
         }
         finally { _lock.Release(); }
@@ -208,11 +263,13 @@ public sealed class GameService(
             {
                 logger.LogInformation("✅ [{Race}] подал приказы. Все игроки готовы — запускаем ход {Turn}",
                     raceName, game.Turn);
+                gameLog.Log(gameId, "Information", raceName, $"Ход {game.Turn}: все игроки готовы, запускаем ход");
             }
             else
             {
                 logger.LogInformation("✅ [{Race}] подал приказы за ход {Turn}. Ждём: [{Waiting}]",
                     raceName, game.Turn, string.Join(", ", waiting));
+                gameLog.Log(gameId, "Information", raceName, $"Ход {game.Turn}: приказы сданы. Ждём: {string.Join(", ", waiting)}");
             }
 
             await hub.Clients.Group(gameId)
@@ -278,6 +335,10 @@ public sealed class GameService(
             await GenerateSummariesForTurnAsync(game, historyTurn, summaryTurn, ct);
             await store.SaveAsync(game, ct);
             logger.LogInformation("Ran turn {Turn} for game {Id}", game.Turn, game.Id);
+            gameLog.Log(gameId, "Information", "GameService", $"Ход {game.Turn - 1} выполнен" +
+                (histEntry.Battles.Count > 0 ? $", битв: {histEntry.Battles.Count}" : "") +
+                (histEntry.Bombings.Count > 0 ? $", бомбардировок: {histEntry.Bombings.Count}" : "") +
+                (game.IsFinished ? $" | ИГРА ЗАВЕРШЕНА: {game.FinishReason}" : ""));
 
             await hub.Clients.Group(gameId)
                 .SendAsync("TurnComplete", new { turn = game.Turn }, ct);
@@ -357,6 +418,8 @@ public sealed class GameService(
 
         logger.LogInformation("Bot {Race} status: {Status}{Detail}",
             raceName, status, safeDetail is not null ? $" — {safeDetail}" : "");
+        gameLog.Log(gameId, "Information", $"Bot[{raceName}]",
+            $"{status}{(safeDetail is not null ? $" — {safeDetail}" : "")}");
 
         // Persist reasoning so it survives beyond the SignalR event lifetime
         if (!string.IsNullOrWhiteSpace(safeThinking))
@@ -519,6 +582,7 @@ public sealed class GameService(
             game.AiSummaries.RemoveAll(s => s.Turn == summaryTurn);
             game.AiSummaries.Add(new AiSummaryEntry { Turn = summaryTurn, Summary = galaxySummary, GeneratedAt = DateTime.UtcNow });
             logger.LogInformation("Galaxy summary generated for game {GameId}, turn {Turn}", game.Id, historyTurn);
+        gameLog.Log(game.Id, "Information", "LlmService", $"Сводка галактики за ход {historyTurn}: {galaxySummary}");
         }
         catch (Exception ex)
         {

@@ -30,6 +30,7 @@ EXPLICIT_MAX_TURNS=false
 REQUESTED_GAME_ID=""
 STRICT_CODEX_DEFAULT=true
 RESUME_REQUESTED=false
+REVIVE_FINISHED=false
 
 for arg in "$@"; do
   if [[ "$arg" == "--resume" ]]; then
@@ -64,6 +65,7 @@ while [[ $# -gt 0 ]]; do
     --auth-dir)     PROVIDER_AUTH_DIR="$2"; shift 2 ;;
     --game-id)      REQUESTED_GAME_ID="$2"; shift 2 ;;
     --max-turns)    MAX_TURNS="$2"; EXPLICIT_MAX_TURNS=true; shift 2 ;;
+    --revive-finished) REVIVE_FINISHED=true; shift ;;
     -h|--help)
       echo "Использование: $0 [опции]"
       echo ""
@@ -88,6 +90,7 @@ while [[ $# -gt 0 ]]; do
       echo "  --auth-dir PATH       Путь к папке auth-файлов Codex (для openai/codex)"
       echo "  --game-id ID          ID сохранённой игры для точного resume"
       echo "  --max-turns N         Лимит ходов игры (по умолчанию: 60)"
+      echo "  --revive-finished     Разморозить игру, завершённую по лимиту ходов"
       echo ""
       echo "  Можно задавать через env:"
       echo "    GALAXYNG_BOT_LLM_PROVIDER=lmstudio|openai/codex"
@@ -487,8 +490,20 @@ for p in d.get('players', []):
     done
 
     if $IS_FINISHED; then
-      warn "Последняя игра $GAME_ID завершена — создаём новую с теми же параметрами"
-      GAME_ID=""
+      if $REVIVE_FINISHED && $EXPLICIT_MAX_TURNS; then
+        info "Игра ${GAME_ID} завершена по лимиту ходов - пробуем разморозить до лимита ${MAX_TURNS}..."
+        curl -sf -X POST "$SERVER_URL/api/games/$GAME_ID/revive" \
+          -H "Content-Type: application/json" \
+          -d "$(printf '{"maxTurns":%d,"autoRunOnAllSubmitted":true}' "$MAX_TURNS")" > /dev/null
+        GAME_DETAIL=$(curl -sf "$SERVER_URL/api/games/$GAME_ID")
+        TURN=$(echo "$GAME_DETAIL" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('turn',0))" 2>/dev/null || echo "0")
+        IS_FINISHED=$(echo "$GAME_DETAIL" | python3 -c "import sys,json; d=json.load(sys.stdin); print('true' if d.get('isFinished') else 'false')" 2>/dev/null || echo "false")
+        ALL_SUBMITTED=$(echo "$GAME_DETAIL" | python3 -c "import sys,json; d=json.load(sys.stdin); players=d.get('players', []); active=[p for p in players if not p.get('isEliminated')]; print('true' if active and all(p.get('submitted') for p in active) else 'false')" 2>/dev/null || echo "false")
+        ok "Игра ${GAME_ID} разморожена"
+      else
+        warn "Игра ${GAME_ID} завершена — для продолжения той же партии используй --revive-finished --max-turns N"
+        GAME_ID=""
+      fi
     else
       if $EXPLICIT_MAX_TURNS; then
         info "Обновляем лимит ходов у игры ${GAME_ID} -> ${MAX_TURNS}..."

@@ -127,6 +127,35 @@ public sealed class GameController(GameService svc) : ControllerBase
         });
     }
 
+    // POST /api/games/{id}/revive — reopen a game finished by max-turn limit
+    [HttpPost("{id}/revive")]
+    public async Task<IActionResult> ReviveGame(string id, [FromBody] ReviveGameRequest req, CancellationToken ct)
+    {
+        if (req.MaxTurns <= 0)
+        {
+            return BadRequest(new { error = "maxTurns must be positive." });
+        }
+
+        var (ok, error, game) = await svc.ReviveFinishedGameAsync(id, req.MaxTurns, req.AutoRunOnAllSubmitted, ct);
+        if (!ok)
+        {
+            return error switch
+            {
+                "Game not found." => NotFound(new { error }),
+                _ => BadRequest(new { error }),
+            };
+        }
+
+        return Ok(new
+        {
+            gameId = game!.Id,
+            maxTurns = game.MaxTurns,
+            turn = game.Turn,
+            isFinished = game.IsFinished,
+            autoRunOnAllSubmitted = game.AutoRunOnAllSubmitted,
+        });
+    }
+
     // POST /api/games/{id}/orders — submit orders
     [HttpPost("{id}/orders")]
     public async Task<IActionResult> SubmitOrders(string id, [FromBody] SubmitOrdersRequest req, CancellationToken ct)
@@ -951,6 +980,7 @@ public sealed record CreateGameRequest(
 );
 
 public sealed record UpdateMaxTurnsRequest(int MaxTurns);
+public sealed record ReviveGameRequest(int MaxTurns, bool AutoRunOnAllSubmitted = true);
 
 public sealed record SubmitOrdersRequest(
     string RaceName,

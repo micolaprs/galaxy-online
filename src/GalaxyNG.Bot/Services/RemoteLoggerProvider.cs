@@ -10,13 +10,14 @@ namespace GalaxyNG.Bot.Services;
 /// </summary>
 public sealed class RemoteLoggerProvider(
     string serverUrl,
-    string raceName) : ILoggerProvider
+    string raceName,
+    string gameId) : ILoggerProvider
 {
     // One shared HttpClient for all loggers in this provider
     private static readonly HttpClient Http = new() { Timeout = TimeSpan.FromSeconds(3) };
 
     public ILogger CreateLogger(string categoryName) =>
-        new RemoteLogger(serverUrl, raceName, categoryName, Http);
+        new RemoteLogger(serverUrl, raceName, gameId, categoryName, Http);
 
     public void Dispose() { }
 }
@@ -24,6 +25,7 @@ public sealed class RemoteLoggerProvider(
 file sealed class RemoteLogger(
     string serverUrl,
     string raceName,
+    string gameId,
     string category,
     HttpClient http) : ILogger
 {
@@ -59,6 +61,7 @@ file sealed class RemoteLogger(
             level = logLevel.ToString(),
             category = $"Bot[{raceName}]/{Short(category)}",
             message = msg,
+            gameId,
         };
 
         // POST fire-and-forget — ignore any errors to not disturb the bot

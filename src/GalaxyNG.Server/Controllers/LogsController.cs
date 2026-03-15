@@ -9,13 +9,17 @@ namespace GalaxyNG.Server.Controllers;
 /// </summary>
 [ApiController]
 [Route("api/logs")]
-public sealed class LogsController(LogBroadcastService broadcaster) : ControllerBase
+public sealed class LogsController(LogBroadcastService broadcaster, GameFileLogWriter gameLog) : ControllerBase
 {
     // POST /api/logs/ingest — bot or external process forwards a log entry
     [HttpPost("ingest")]
     public IActionResult Ingest([FromBody] IngestLogRequest req)
     {
         broadcaster.Broadcast(req.Level, req.Category, req.Message);
+        if (!string.IsNullOrEmpty(req.GameId))
+        {
+            gameLog.Log(req.GameId, req.Level, req.Category, req.Message);
+        }
         return Ok();
     }
 }
@@ -23,5 +27,6 @@ public sealed class LogsController(LogBroadcastService broadcaster) : Controller
 public sealed record IngestLogRequest(
     string Level,
     string Category,
-    string Message
+    string Message,
+    string? GameId = null
 );

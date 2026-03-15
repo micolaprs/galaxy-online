@@ -13,7 +13,8 @@ var host = Host.CreateDefaultBuilder(args)
         // Forward every bot log line to the server's web console (fire-and-forget)
         var serverUrl = ctx.Configuration["Bot:ServerUrl"] ?? "http://localhost:5055";
         var raceName = ctx.Configuration["Bot:RaceName"] ?? "Bot";
-        logging.AddProvider(new RemoteLoggerProvider(serverUrl, raceName));
+        var gameId = ctx.Configuration["Bot:GameId"] ?? "";
+        logging.AddProvider(new RemoteLoggerProvider(serverUrl, raceName, gameId));
     })
     .ConfigureServices((ctx, services) =>
     {

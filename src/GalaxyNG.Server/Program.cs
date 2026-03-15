@@ -41,6 +41,7 @@ else
 }
 
 builder.Services.AddSingleton<LlmService>();
+builder.Services.AddSingleton<GameFileLogWriter>();
 builder.Services.AddSingleton<GameService>();
 
 // ASP.NET
