@@ -101,11 +101,15 @@ export interface SpectatePlanet {
   name: string; x: number; y: number;
   size: number; ownerId: string | null; population: number;
 }
+export interface ShipDesignSnapshot {
+  weapons: number; shields: number; drive: number; cargo: number; attacks: number;
+}
 export interface BattleShot { attackerRace: string; defenderRace: string; killed: boolean; }
 export interface SpectateBattle  {
   planetName: string; winner: string; participants: string[];
   protocol?: BattleShot[];
   initialShips?: Record<string, number>;
+  shipDesigns?: Record<string, ShipDesignSnapshot>;
 }
 export interface SpectateBombing {
   planetName: string;
@@ -118,6 +122,7 @@ export interface BattleRecordDetail {
   planetName: string; winner: string; participants: string[];
   protocol: BattleShot[];
   initialShips: Record<string, number>;
+  shipDesigns?: Record<string, ShipDesignSnapshot>;
 }
 export interface BattleSummary {
   planetName: string; winner: string; participants: string[];

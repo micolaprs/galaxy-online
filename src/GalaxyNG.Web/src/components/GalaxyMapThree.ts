@@ -94,6 +94,52 @@ interface ProductionRingVisual {
   orbitPhase: number;
 }
 
+// ---- Map bombing animation types ----
+
+export interface MapBombingData {
+  planetName:    string;
+  attackerRace:  string;
+  previousOwner: string | null;
+  attackerColor: string;
+  oldPopulation?: number;
+}
+
+interface MapBombObj {
+  mesh: THREE.Mesh<THREE.CircleGeometry, THREE.MeshBasicMaterial>;
+  trail: THREE.Line<THREE.BufferGeometry, THREE.LineBasicMaterial>;
+  sx: number; sy: number; tx: number; ty: number;
+  progress: number; done: boolean;
+}
+
+interface MapBombExpl {
+  ring: THREE.Mesh<THREE.RingGeometry, THREE.MeshBasicMaterial>;
+  points: THREE.Points<THREE.BufferGeometry, THREE.PointsMaterial>;
+  partsBuf: Float32Array;
+  parts: Array<{ x: number; y: number; vx: number; vy: number }>;
+  r: number; maxR: number; op: number; done: boolean;
+}
+
+interface BombingAnimState {
+  planet:        ThreePlanet;
+  wx: number; wy: number;     // world coords of planet centre
+  planetR:       number;      // planet world radius
+  orbitA:        number;
+  orbitB:        number;
+  colorNum:      number;
+  shipGroups:    THREE.Group[];
+  orbitPhases:   number[];
+  bombs:         MapBombObj[];
+  explosions:    MapBombExpl[];
+  t:             number;      // animation time (seconds)
+  nextBombT:     number;
+  bombShipIdx:   number;
+  impactCount:   number;
+  /** Saved camera state to restore after animation */
+  savedZoom: number;
+  savedPanX: number;
+  savedPanY: number;
+}
+
 export class GalaxyMapThree {
   private renderer!: THREE.WebGLRenderer;
   private scene!:    THREE.Scene;
@@ -113,10 +159,14 @@ export class GalaxyMapThree {
   private combatMarkers: CombatMarkerVisual[] = [];
   private combatBursts: CombatBurstVisual[] = [];
   private productionRings: ProductionRingVisual[] = [];
-  // Pan animation
-  private panTarget: { x: number; y: number } | null = null;
+  // Pan + zoom animation
+  private panTarget: { x: number; y: number; zoom?: number } | null = null;
   private panAnimT = 0;
-  private panAnimFrom = { x: 0, y: 0 };
+  private panAnimFrom = { x: 0, y: 0, zoom: 1 };
+
+  // On-map bombing animation
+  private bombingAnim: BombingAnimState | null = null;
+  private bombingOverlay: HTMLElement | null = null;
   private showAllRoutes = false;
   private routeFocusPlanet: string | null = null;
   private galaxySize = 0;
@@ -208,6 +258,106 @@ export class GalaxyMapThree {
     for (const planetName of events.bombingPlanets) spawnBurst(planetName, 'bombing');
   }
 
+  triggerBombingOnMap(data: MapBombingData): void {
+    const planet = this.planets.find(p => p.name === data.planetName);
+    if (!planet) return;
+
+    // Stop any existing bombing animation first
+    this.stopBombingOnMap(false);
+
+    const wx      = planet.x;
+    const wy      = -planet.y;   // Three.js Y is flipped vs game data
+    const planetR = this.planetRadius(planet.size);
+    const orbitA  = planetR * 2.4;
+    const orbitB  = planetR * 0.85;
+    const colorNum = this.hexColor(data.attackerColor);
+
+    // 3 orbiting attacker ships
+    const shipGroups: THREE.Group[] = [];
+    const orbitPhases = [0, (Math.PI * 2) / 3, (Math.PI * 4) / 3];
+    for (let i = 0; i < 3; i++) {
+      const shipGeo = new THREE.ShapeGeometry(this.makeMapShipShape(planetR));
+      const shipMat = new THREE.MeshBasicMaterial({
+        color: colorNum, transparent: true, opacity: 0.9,
+        blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide,
+      });
+      const body = new THREE.Mesh(shipGeo, shipMat);
+
+      const glowGeo = new THREE.CircleGeometry(planetR * 0.08, 8);
+      const glowMat = new THREE.MeshBasicMaterial({
+        color: 0xff9900, transparent: true, opacity: 0.5,
+        blending: THREE.AdditiveBlending, depthWrite: false,
+      });
+      const glow = new THREE.Mesh(glowGeo, glowMat);
+      glow.position.set(-planetR * 0.12, 0, -0.01);
+
+      const g = new THREE.Group();
+      g.add(body);
+      g.add(glow);
+      g.position.set(wx, wy, 1.5);
+      this.scene.add(g);
+      shipGroups.push(g);
+    }
+
+    // Bombing overlay label + stop button
+    const overlay = document.createElement('div');
+    overlay.style.cssText = [
+      'position:absolute', 'top:10px', 'left:50%', 'transform:translateX(-50%)',
+      'background:rgba(2,8,22,0.88)', 'border:1px solid rgba(251,191,36,0.5)',
+      'border-radius:6px', 'padding:6px 14px', 'display:flex', 'align-items:center', 'gap:10px',
+      'font:12px monospace', 'color:#fbbf24', 'white-space:nowrap',
+      'text-shadow:0 0 8px #fbbf24', 'z-index:10',
+    ].join(';');
+    overlay.innerHTML = `<span>💥 Бомбардировка <b>${esc(data.planetName)}</b> · ${esc(data.attackerRace)}</span>`
+      + `<button style="background:none;border:1px solid rgba(251,191,36,0.5);color:#fbbf24;`
+      + `font:11px monospace;padding:2px 7px;border-radius:3px;cursor:pointer" id="bv-bombing-stop">✕</button>`;
+    this.container.style.position = 'relative';
+    this.container.appendChild(overlay);
+    overlay.querySelector('#bv-bombing-stop')!.addEventListener('click', () => this.stopBombingOnMap(true));
+    this.bombingOverlay = overlay;
+
+    // Save camera state and zoom in on planet
+    const targetZoom = planetR / Math.max(this.container.clientHeight * 0.22, 0.001);
+    this.panAnimFrom = { x: this.panX, y: this.panY, zoom: this.zoom };
+    this.panTarget   = { x: wx, y: wy, zoom: targetZoom };
+    this.panAnimT    = 0;
+
+    this.bombingAnim = {
+      planet, wx, wy, planetR, orbitA, orbitB, colorNum,
+      shipGroups, orbitPhases,
+      bombs: [], explosions: [],
+      t: 0, nextBombT: 1.5, bombShipIdx: 0, impactCount: 0,
+      savedZoom: this.zoom, savedPanX: this.panX, savedPanY: this.panY,
+    };
+  }
+
+  stopBombingOnMap(restoreCamera = true): void {
+    if (!this.bombingAnim) return;
+    const anim = this.bombingAnim;
+    this.bombingAnim = null;
+
+    // Remove ships
+    for (const g of anim.shipGroups) {
+      this.scene.remove(g);
+      g.traverse(o => {
+        if (o instanceof THREE.Mesh) { o.geometry.dispose(); (o.material as THREE.Material).dispose(); }
+      });
+    }
+    // Remove bombs & explosions
+    for (const b of anim.bombs) this.disposeBomb(b);
+    for (const e of anim.explosions) this.disposeMapExpl(e);
+
+    // Remove overlay
+    this.bombingOverlay?.remove();
+    this.bombingOverlay = null;
+
+    if (restoreCamera) {
+      this.panAnimFrom = { x: this.panX, y: this.panY, zoom: this.zoom };
+      this.panTarget   = { x: anim.savedPanX, y: anim.savedPanY, zoom: anim.savedZoom };
+      this.panAnimT    = 0;
+    }
+  }
+
   select(name: string | null): void {
     this.selectedName = name;
     this.updateSelectionRing();
@@ -219,7 +369,7 @@ export class GalaxyMapThree {
     this.updateSelectionRing();
     const planet = this.planets.find(p => p.name === name);
     if (planet) {
-      this.panAnimFrom = { x: this.panX, y: this.panY };
+      this.panAnimFrom = { x: this.panX, y: this.panY, zoom: this.zoom };
       this.panTarget = { x: planet.x, y: -planet.y };
       this.panAnimT = 0;
     }
@@ -878,6 +1028,7 @@ export class GalaxyMapThree {
     this.animateClickPulses(dt);
     this.animateProductionRings(dt);
     this.animatePan(dt);
+    this.animateBombing(dt);
 
     if (this.selectedPlanet) this.updateOverlayPosition();
   }
@@ -1250,12 +1401,195 @@ export class GalaxyMapThree {
 
   private animatePan(dt: number): void {
     if (!this.panTarget) return;
-    this.panAnimT = Math.min(1, this.panAnimT + dt * 3.5);
+    this.panAnimT = Math.min(1, this.panAnimT + dt * 2.2);
     const t = 1 - Math.pow(1 - this.panAnimT, 3); // ease-out cubic
     this.panX = this.panAnimFrom.x + (this.panTarget.x - this.panAnimFrom.x) * t;
     this.panY = this.panAnimFrom.y + (this.panTarget.y - this.panAnimFrom.y) * t;
+    if (this.panTarget.zoom !== undefined) {
+      this.zoom = this.panAnimFrom.zoom + (this.panTarget.zoom - this.panAnimFrom.zoom) * t;
+    }
     this.updateCamera();
     if (this.panAnimT >= 1) this.panTarget = null;
+  }
+
+  // ---- Map bombing animation internals ----
+
+  private makeMapShipShape(planetR: number): THREE.Shape {
+    const u = planetR * 0.1;  // ~10% of planet radius as base unit
+    const s = new THREE.Shape();
+    s.moveTo(u * 1.8, 0);
+    s.lineTo(-u * 0.5, -u);
+    s.lineTo(-u * 1.2, -u * 0.6);
+    s.lineTo(-u, 0);
+    s.lineTo(-u * 1.2, u * 0.6);
+    s.lineTo(-u * 0.5, u);
+    s.closePath();
+    return s;
+  }
+
+  private animateBombing(dt: number): void {
+    const anim = this.bombingAnim;
+    if (!anim) return;
+    anim.t += dt;
+    const orbitSpeed = 0.72; // rad/s
+
+    // Update ship orbits
+    for (let i = 0; i < 3; i++) {
+      anim.orbitPhases[i]! += orbitSpeed * dt;
+      const phase = anim.orbitPhases[i]!;
+      const ox = anim.wx + Math.cos(phase) * anim.orbitA;
+      const oy = anim.wy + Math.sin(phase) * anim.orbitB;
+      const angle = Math.atan2(
+        -Math.sin(phase) * anim.orbitB,
+         Math.cos(phase) * anim.orbitA  // tangent direction
+      );
+      const g = anim.shipGroups[i]!;
+      g.position.set(ox, oy, 1.5);
+      g.rotation.z = angle;
+      // hide behind planet (below wy - half of orbitB)
+      g.visible = oy > anim.wy - anim.orbitB * 0.25;
+      // engine glow pulse
+      const glow = g.children[1] as THREE.Mesh<THREE.CircleGeometry, THREE.MeshBasicMaterial>;
+      if (glow) glow.material.opacity = 0.3 + 0.2 * Math.sin(anim.t * 5 + i * 1.2);
+    }
+
+    // Spawn bombs
+    if (anim.t >= anim.nextBombT) {
+      this.fireBombOnMap(anim);
+      anim.bombShipIdx++;
+      anim.nextBombT = anim.t + (anim.impactCount > 0 && anim.impactCount % 5 === 0 ? 2.5 : 1.2);
+    }
+
+    // Update bombs
+    const bombSpeed = 0.018;
+    for (const bomb of anim.bombs) {
+      if (bomb.done) continue;
+      bomb.progress += bombSpeed;
+      const p  = Math.min(1, bomb.progress);
+      const cx = bomb.sx + (bomb.tx - bomb.sx) * p;
+      const cy = bomb.sy + (bomb.ty - bomb.sy) * p;
+      bomb.mesh.position.set(cx, cy, 1.8);
+      const tail = Math.max(0, p - 0.1);
+      const tx2 = bomb.sx + (bomb.tx - bomb.sx) * tail;
+      const ty2 = bomb.sy + (bomb.ty - bomb.sy) * tail;
+      const attr = bomb.trail.geometry.attributes['position'] as THREE.BufferAttribute;
+      attr.setXYZ(0, tx2, ty2, 1.75);
+      attr.setXYZ(1, cx, cy, 1.75);
+      attr.needsUpdate = true;
+      if (p >= 1) {
+        bomb.done = true;
+        this.onBombImpactOnMap(anim, bomb.tx, bomb.ty);
+        anim.impactCount++;
+        this.disposeBomb(bomb);
+      }
+    }
+    anim.bombs = anim.bombs.filter(b => !b.done);
+
+    // Update explosions
+    for (const expl of anim.explosions) {
+      if (expl.done) continue;
+      expl.r  += (expl.maxR - expl.r) * 0.1;
+      expl.op -= 0.025;
+      if (expl.op <= 0) { expl.done = true; this.disposeMapExpl(expl); continue; }
+      expl.ring.scale.set(expl.r, expl.r, 1);
+      expl.ring.material.opacity = expl.op;
+      for (let i = 0; i < expl.parts.length; i++) {
+        const p = expl.parts[i]!;
+        p.x += p.vx * dt * 60;
+        p.y += p.vy * dt * 60;
+        expl.partsBuf[i * 3]     = p.x;
+        expl.partsBuf[i * 3 + 1] = p.y;
+      }
+      (expl.points.geometry.attributes['position'] as THREE.BufferAttribute).needsUpdate = true;
+      expl.points.material.opacity = expl.op;
+    }
+    anim.explosions = anim.explosions.filter(e => !e.done);
+  }
+
+  private fireBombOnMap(anim: BombingAnimState): void {
+    const shipIdx = anim.bombShipIdx % 3;
+    const phase   = anim.orbitPhases[shipIdx]!;
+    const sx = anim.wx + Math.cos(phase) * anim.orbitA;
+    const sy = anim.wy + Math.sin(phase) * anim.orbitB;
+
+    const impactAngle = Math.random() * Math.PI * 2;
+    const tx = anim.wx + Math.cos(impactAngle) * anim.planetR * 0.82;
+    const ty = anim.wy + Math.sin(impactAngle) * anim.planetR * 0.82;
+
+    const r = anim.planetR * 0.045;
+    const bGeo = new THREE.CircleGeometry(r, 8);
+    const bMat = new THREE.MeshBasicMaterial({
+      color: 0xff6020, transparent: true, opacity: 1,
+      blending: THREE.AdditiveBlending, depthWrite: false,
+    });
+    const mesh = new THREE.Mesh(bGeo, bMat);
+    mesh.position.set(sx, sy, 1.8);
+    this.scene.add(mesh);
+
+    const trailGeo = new THREE.BufferGeometry();
+    trailGeo.setAttribute('position', new THREE.BufferAttribute(
+      new Float32Array([sx, sy, 1.75, sx, sy, 1.75]), 3));
+    const trailMat = new THREE.LineBasicMaterial({
+      color: 0xff8030, transparent: true, opacity: 0.7,
+      blending: THREE.AdditiveBlending, depthWrite: false,
+    });
+    const trail = new THREE.Line(trailGeo, trailMat);
+    this.scene.add(trail);
+
+    anim.bombs.push({ mesh, trail, sx, sy, tx, ty, progress: 0, done: false });
+  }
+
+  private onBombImpactOnMap(anim: BombingAnimState, ix: number, iy: number): void {
+    const n = 14;
+    const partsBuf = new Float32Array(n * 3);
+    const parts: BombingAnimState['explosions'][0]['parts'] = [];
+    const spd = anim.planetR * 0.06;
+    for (let i = 0; i < n; i++) {
+      const a   = (Math.PI * 2 * i) / n + Math.random() * 0.4;
+      const s   = spd * (0.6 + Math.random());
+      parts.push({ x: ix, y: iy, vx: Math.cos(a) * s, vy: Math.sin(a) * s });
+      partsBuf[i * 3] = ix; partsBuf[i * 3 + 1] = iy; partsBuf[i * 3 + 2] = 1.9;
+    }
+
+    const ringGeo = new THREE.RingGeometry(0.5, 1, 32);
+    const ringMat = new THREE.MeshBasicMaterial({
+      color: 0xff4400, transparent: true, opacity: 1,
+      blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide,
+    });
+    const ring = new THREE.Mesh(ringGeo, ringMat);
+    ring.position.set(ix, iy, 1.85);
+    ring.scale.setScalar(anim.planetR * 0.07);
+    this.scene.add(ring);
+
+    const pGeo = new THREE.BufferGeometry();
+    pGeo.setAttribute('position', new THREE.BufferAttribute(partsBuf, 3));
+    const pMat = new THREE.PointsMaterial({
+      color: 0xff8800, size: 2, sizeAttenuation: false,
+      transparent: true, opacity: 1,
+      blending: THREE.AdditiveBlending, depthWrite: false,
+    });
+    const points = new THREE.Points(pGeo, pMat);
+    this.scene.add(points);
+
+    anim.explosions.push({
+      ring, points, partsBuf, parts,
+      r: anim.planetR * 0.07, maxR: anim.planetR * 0.45,
+      op: 1, done: false,
+    });
+  }
+
+  private disposeBomb(b: MapBombObj): void {
+    this.scene.remove(b.mesh);
+    this.scene.remove(b.trail);
+    b.mesh.geometry.dispose(); b.mesh.material.dispose();
+    b.trail.geometry.dispose(); b.trail.material.dispose();
+  }
+
+  private disposeMapExpl(e: MapBombExpl): void {
+    this.scene.remove(e.ring);
+    this.scene.remove(e.points);
+    e.ring.geometry.dispose(); e.ring.material.dispose();
+    e.points.geometry.dispose(); e.points.material.dispose();
   }
 
   private disposeSceneObjects(): void {
@@ -1294,6 +1628,9 @@ export class GalaxyMapThree {
     this.productionRings = [];
     this.clickPulses = [];
     this.disposeAsteroidFlybys();
+    if (this.bombingAnim) { this.stopBombingOnMap(false); }
+    this.bombingOverlay?.remove();
+    this.bombingOverlay = null;
   }
 
   private disposeAsteroidFlybys(): void {

@@ -143,10 +143,10 @@ export class BombingVisualizer {
   readonly CH       = 420;
   // In Three.js world coords (origin = center of canvas)
   readonly PLANET_X =   0;
-  readonly PLANET_Y = -180;   // near bottom
-  readonly PLANET_R = 220;
-  readonly ORBIT_A  = 290;
-  readonly ORBIT_B  =  95;
+  readonly PLANET_Y =   0;   // centered
+  readonly PLANET_R = 150;
+  readonly ORBIT_A  = 230;
+  readonly ORBIT_B  =  80;
 
   // Disposable scene items
   private planetMesh!:    THREE.Mesh;
@@ -275,8 +275,8 @@ export class BombingVisualizer {
     container.appendChild(this.renderer.domElement);
 
     this.scene  = new THREE.Scene();
-    // Camera: [-450..450] x [-210..210]
-    this.camera = new THREE.OrthographicCamera(-450, 450, 210, -210, 0.1, 1000);
+    // Camera zoomed in: planet is centered, [-340..340] x [-190..190]
+    this.camera = new THREE.OrthographicCamera(-340, 340, 190, -190, 0.1, 1000);
     this.camera.position.set(0, 0, 10);
   }
 
@@ -285,8 +285,8 @@ export class BombingVisualizer {
     const starCount = 180;
     const starPos   = new Float32Array(starCount * 3);
     for (let i = 0; i < starCount; i++) {
-      starPos[i*3]   = (Math.random() - 0.5) * 900;
-      starPos[i*3+1] = (Math.random() - 0.5) * 420;
+      starPos[i*3]   = (Math.random() - 0.5) * 680;
+      starPos[i*3+1] = (Math.random() - 0.5) * 380;
       starPos[i*3+2] = -5;
     }
     const starGeo = new THREE.BufferGeometry();
@@ -400,8 +400,8 @@ export class BombingVisualizer {
   private fireBomb(shipIdx: number): void {
     const pos = this.getOrbitPos(this.orbitPhases[shipIdx]!);
 
-    // Impact on visible upper arc of planet
-    const impactAngle = -(Math.PI * 0.2 + Math.random() * Math.PI * 0.6);
+    // Impact on visible surface of planet (full range)
+    const impactAngle = Math.random() * Math.PI * 2;
     const tx = this.PLANET_X + Math.cos(impactAngle) * (this.PLANET_R - 18);
     const ty = this.PLANET_Y + Math.sin(impactAngle) * (this.PLANET_R - 18);
 
@@ -461,12 +461,12 @@ export class BombingVisualizer {
 
   private onBombImpact(bomb: BombObj): void {
     // Surface explosion
-    const n = 12;
+    const n = 18;
     const partsBuf = new Float32Array(n * 3);
     const parts: BombExpl['parts'] = [];
     for (let i = 0; i < n; i++) {
       const a   = (Math.PI * 2 * i) / n + Math.random() * 0.4;
-      const spd = 1.8 + Math.random() * 3;
+      const spd = 3.0 + Math.random() * 5;
       parts.push({ x: bomb.tx, y: bomb.ty, vx: Math.cos(a) * spd, vy: Math.sin(a) * spd, life: 1 });
       partsBuf[i*3] = bomb.tx; partsBuf[i*3+1] = bomb.ty; partsBuf[i*3+2] = 3.5;
     }
@@ -478,13 +478,13 @@ export class BombingVisualizer {
     });
     const ring = new THREE.Mesh(ringGeo, ringMat);
     ring.position.set(bomb.tx, bomb.ty, 3);
-    ring.scale.set(4, 4, 1);
+    ring.scale.set(6, 6, 1);
     this.scene.add(ring);
 
     const pointsGeo = new THREE.BufferGeometry();
     pointsGeo.setAttribute('position', new THREE.BufferAttribute(partsBuf, 3));
     const pointsMat = new THREE.PointsMaterial({
-      color: 0xff8800, size: 3.5, sizeAttenuation: false,
+      color: 0xff8800, size: 4.5, sizeAttenuation: false,
       transparent: true, opacity: 1,
       blending: THREE.AdditiveBlending, depthWrite: false,
     });
@@ -493,7 +493,7 @@ export class BombingVisualizer {
 
     this.explosions.push({
       ring, points, partsBuf, parts,
-      x: bomb.tx, y: bomb.ty, r: 4, maxR: 40, op: 1, done: false,
+      x: bomb.tx, y: bomb.ty, r: 6, maxR: 55, op: 1, done: false,
     });
 
     // Population counter

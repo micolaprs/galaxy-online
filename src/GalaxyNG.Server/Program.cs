@@ -77,6 +77,15 @@ app.Lifetime.ApplicationStarted.Register(() =>
     {
         try
         {
+            var skipStartupAutoRun = string.Equals(
+                Environment.GetEnvironmentVariable("GALAXYNG_SKIP_STARTUP_AUTORUN"),
+                "true",
+                StringComparison.OrdinalIgnoreCase);
+            if (skipStartupAutoRun)
+            {
+                return;
+            }
+
             await Task.Delay(500); // brief pause to let SignalR hub initialize
             var gameService = app.Services.GetRequiredService<GameService>();
             var sysLog = app.Services.GetRequiredService<ILogger<GameService>>();

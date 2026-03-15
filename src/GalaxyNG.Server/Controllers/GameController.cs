@@ -99,6 +99,34 @@ public sealed class GameController(GameService svc) : ControllerBase
         });
     }
 
+    // PATCH /api/games/{id}/max-turns — update maxTurns for an active game
+    [HttpPatch("{id}/max-turns")]
+    public async Task<IActionResult> UpdateMaxTurns(string id, [FromBody] UpdateMaxTurnsRequest req, CancellationToken ct)
+    {
+        if (req.MaxTurns <= 0)
+        {
+            return BadRequest(new { error = "maxTurns must be positive." });
+        }
+
+        var (ok, error, game) = await svc.UpdateMaxTurnsAsync(id, req.MaxTurns, ct);
+        if (!ok)
+        {
+            return error switch
+            {
+                "Game not found." => NotFound(new { error }),
+                _ => BadRequest(new { error }),
+            };
+        }
+
+        return Ok(new
+        {
+            gameId = game!.Id,
+            maxTurns = game.MaxTurns,
+            turn = game.Turn,
+            isFinished = game.IsFinished,
+        });
+    }
+
     // POST /api/games/{id}/orders — submit orders
     [HttpPost("{id}/orders")]
     public async Task<IActionResult> SubmitOrders(string id, [FromBody] SubmitOrdersRequest req, CancellationToken ct)
@@ -297,6 +325,9 @@ public sealed class GameController(GameService svc) : ControllerBase
                 b.Participants,
                 Protocol = b.Protocol.Select(s => new { s.AttackerRace, s.DefenderRace, s.Killed }),
                 InitialShips = b.InitialShips,
+                ShipDesigns = b.ShipDesigns.ToDictionary(
+                    kv => kv.Key,
+                    kv => new { kv.Value.Weapons, kv.Value.Shields, kv.Value.Drive, kv.Value.Cargo, kv.Value.Attacks }),
             }),
             bombings = game.Bombings.Select(b => new
             {
@@ -450,6 +481,9 @@ public sealed class GameController(GameService svc) : ControllerBase
             b.Participants,
             Protocol = b.Protocol.Select(s => new { s.AttackerRace, s.DefenderRace, s.Killed }),
             InitialShips = b.InitialShips,
+            ShipDesigns = b.ShipDesigns.ToDictionary(
+                kv => kv.Key,
+                kv => new { kv.Value.Weapons, kv.Value.Shields, kv.Value.Drive, kv.Value.Cargo, kv.Value.Attacks }),
         }));
     }
 
@@ -915,6 +949,8 @@ public sealed record CreateGameRequest(
     bool AutoRun = false,
     int? MaxTurns = null
 );
+
+public sealed record UpdateMaxTurnsRequest(int MaxTurns);
 
 public sealed record SubmitOrdersRequest(
     string RaceName,

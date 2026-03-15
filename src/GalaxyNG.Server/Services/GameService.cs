@@ -106,6 +106,37 @@ public sealed class GameService(
         return games;
     }
 
+    public async Task<(bool ok, string? error, Game? game)> UpdateMaxTurnsAsync(
+        string gameId, int maxTurns, CancellationToken ct = default)
+    {
+        if (maxTurns <= 0)
+        {
+            return (false, "Max turns must be positive.", null);
+        }
+
+        await _lock.WaitAsync(ct);
+        try
+        {
+            var game = _cache.GetValueOrDefault(gameId) ?? await store.LoadAsync(gameId, ct);
+            if (game is null)
+            {
+                return (false, "Game not found.", null);
+            }
+
+            if (game.IsFinished)
+            {
+                return (false, "Game already finished.", null);
+            }
+
+            game.MaxTurns = maxTurns;
+            _cache[gameId] = game;
+            await store.SaveAsync(game, ct);
+            logger.LogInformation("Updated max turns for game {Id}: {MaxTurns}", gameId, maxTurns);
+            return (true, null, game);
+        }
+        finally { _lock.Release(); }
+    }
+
     // ---- Player join ----
 
     public async Task<(bool ok, string? error, Player? player)> JoinGameAsync(

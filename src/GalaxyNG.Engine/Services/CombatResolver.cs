@@ -45,6 +45,23 @@ public sealed class CombatResolver(Random? rng = null)
             .GroupBy(w => w.player.Name)
             .ToDictionary(g => g.Key, g => g.Sum(x => x.group.Ships));
 
+        // Capture dominant ship design per race (heaviest warship by mass)
+        var shipDesigns = warships
+            .GroupBy(w => w.player.Name)
+            .ToDictionary(g => g.Key, g =>
+            {
+                var dominant = g
+                    .Select(x => game.Players.Values
+                        .FirstOrDefault(p => p.Name == x.player.Name)
+                        ?.ShipTypes.GetValueOrDefault(x.group.ShipTypeName))
+                    .Where(st => st is not null)
+                    .OrderByDescending(st => st!.Mass)
+                    .FirstOrDefault();
+                return dominant is null
+                    ? new ShipDesignSnapshot(1, 0, 1, 0, 1)
+                    : new ShipDesignSnapshot(dominant.Weapons, dominant.Shields, dominant.Drive, dominant.Cargo, dominant.Attacks);
+            });
+
         // Build combatant list (one entry per ship — flattened)
         var combatants = BuildCombatants(warships, game);
         var protocol = new List<BattleShot>();
@@ -128,7 +145,7 @@ public sealed class CombatResolver(Random? rng = null)
             winner,
             [.. warships.Select(w => w.player.Name).Distinct()],
             protocol)
-        { InitialShips = initialShips };
+        { InitialShips = initialShips, ShipDesigns = shipDesigns };
     }
 
     // --- bombing ---

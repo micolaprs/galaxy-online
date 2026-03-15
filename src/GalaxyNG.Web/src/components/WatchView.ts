@@ -6,7 +6,6 @@ import type {
   TurnHistoryEntry, BattleSummary, BattleRecordDetail,
 } from '../types/api.js';
 import { BattleVisualizer } from './BattleVisualizer.js';
-import { BombingVisualizer } from './BombingVisualizer.js';
 import {
   GalaxyMapThree,
   type ThreeCombatEvents,
@@ -65,7 +64,6 @@ export class WatchView {
   private finalReport: FinalGameReport | null = null;
   private finalReportAutoOpened = false;
   private activeVisualizer: BattleVisualizer | null = null;
-  private activeBombingVisualizer: BombingVisualizer | null = null;
 
   onBack?: () => void;
 
@@ -83,7 +81,6 @@ export class WatchView {
     this.map?.destroy();
     this.planetPanel?.destroy();
     if (this.hub) void this.hub.invoke('LeaveGameGroup', this.gameId).catch(() => {});
-    this.activeBombingVisualizer?.destroy();
   }
 
   // ---- Hub ----
@@ -591,7 +588,8 @@ export class WatchView {
     // Bombing animation button handlers
     tab.querySelectorAll<HTMLElement>('.bv-bombing-btn').forEach(btn => {
       btn.addEventListener('click', () => {
-        this.openBombingVisualizer({
+        this.closeBattleVisualizer();
+        this.map.triggerBombingOnMap({
           planetName:    btn.dataset['planet'] ?? '',
           attackerRace:  btn.dataset['attacker'] ?? '',
           previousOwner: btn.dataset['prevOwner'] || null,
@@ -615,11 +613,12 @@ export class WatchView {
       const raw = liveEntry.battlesRaw.find(b => b.planetName === planetName);
       if (raw?.protocol && raw.protocol.length > 0) {
         record = {
-          planetName: raw.planetName,
-          winner:     raw.winner,
+          planetName:   raw.planetName,
+          winner:       raw.winner,
           participants: raw.participants,
-          protocol:   raw.protocol,
+          protocol:     raw.protocol,
           initialShips: raw.initialShips ?? {},
+          shipDesigns:  raw.shipDesigns,
         };
       }
     }
@@ -639,6 +638,7 @@ export class WatchView {
       return;
     }
 
+    this.map?.stopBombingOnMap(false);
     this.closeBattleVisualizer();
     this.activeVisualizer = new BattleVisualizer(record, this.playerColorMap);
 
@@ -653,35 +653,13 @@ export class WatchView {
   }
 
   private closeBattleVisualizer(): void {
+    this.map?.stopBombingOnMap(true);
     this.activeVisualizer?.destroy();
     this.activeVisualizer = null;
-    this.activeBombingVisualizer?.destroy();
-    this.activeBombingVisualizer = null;
     const overlay = this.el.querySelector<HTMLElement>('#wv-battle-overlay');
     overlay?.classList.add('hidden');
     const body = this.el.querySelector<HTMLElement>('#wv-battle-body');
     if (body) body.innerHTML = '';
-  }
-
-  private openBombingVisualizer(data: import('./BombingVisualizer.js').BombingData): void {
-    // Close any existing visualizers without triggering recursive calls
-    this.activeVisualizer?.destroy();
-    this.activeVisualizer = null;
-    this.closeBombingVisualizer();
-    const viz = new BombingVisualizer(data);
-    this.activeBombingVisualizer = viz;
-    const overlay = this.el.querySelector<HTMLElement>('#wv-battle-overlay')!;
-    const body    = this.el.querySelector<HTMLElement>('#wv-battle-body')!;
-    const title   = this.el.querySelector<HTMLElement>('#wv-battle-title')!;
-    title.textContent = `Бомбардировка · ${data.planetName}`;
-    body.innerHTML = '';
-    body.appendChild(viz.element);
-    overlay.classList.remove('hidden');
-  }
-
-  private closeBombingVisualizer(): void {
-    this.activeBombingVisualizer?.destroy();
-    this.activeBombingVisualizer = null;
   }
 
   private async runTurn(): Promise<void> {

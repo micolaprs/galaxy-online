@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import type { BattleRecordDetail } from '../types/api.js';
+import type { BattleRecordDetail, ShipDesignSnapshot } from '../types/api.js';
 
 // ---- Constants ----
 
@@ -19,16 +19,84 @@ function lightenHex(hex: string, amt: number): number {
   return (r << 16) | (g << 8) | b;
 }
 
-function makeShipShape(): THREE.Shape {
+/**
+ * Build a ship shape procedurally from its design parameters.
+ *
+ * Axes: +X = nose direction (facing right), Y = lateral.
+ *
+ * Design influence:
+ *   drive    → hull length & engine width
+ *   weapons  → cannon barrel length (per barrel)
+ *   shields  → hull width / armor bulk
+ *   attacks  → number of gun barrels
+ *   cargo    → widened mid-section belly
+ */
+function makeShipShape(design: ShipDesignSnapshot): THREE.Shape {
+  const mass    = design.drive + design.weapons + design.shields + design.cargo
+                  + Math.max(0, design.attacks - 1) * design.weapons / 2;
+  const norm    = (v: number) => mass > 0 ? v / mass : 0;
+
+  // Normalised fractions (0..1)
+  const driveF   = Math.min(norm(design.drive),   1);
+  const weapF    = Math.min(norm(design.weapons),  1);
+  const shieldF  = Math.min(norm(design.shields),  1);
+  const cargoF   = Math.min(norm(design.cargo),    1);
+
+  // Hull proportions (world-space units, ship ~20 wide)
+  const hullLen  = 10 + driveF * 8;          // 10..18
+  const halfW    = 5  + shieldF * 6;         // 5..11  (armor bulk)
+  const belly    = 1  + cargoF  * 4;         // 1..5   (cargo belly offset)
+  const noseX    = hullLen;
+  const tailX    = -(hullLen * 0.55);
+  const engineW  = 3  + driveF  * 4;         // engine nozzle half-width
+
   const s = new THREE.Shape();
-  s.moveTo(14, 0);
-  s.lineTo(-4, -8);
-  s.lineTo(-10, -5);
-  s.lineTo(-8, 0);
-  s.lineTo(-10, 5);
-  s.lineTo(-4, 8);
+  // Hull outline (nose → top fin → tail notch → bottom fin)
+  s.moveTo(noseX, 0);
+  s.lineTo(noseX * 0.35, halfW * 0.55);
+  s.quadraticCurveTo(tailX * 0.3, halfW + belly, tailX * 0.6, engineW * 1.15);
+  s.lineTo(tailX, engineW);
+  s.lineTo(tailX - 1, 0);
+  s.lineTo(tailX, -engineW);
+  s.lineTo(tailX * 0.6, -engineW * 1.15);
+  s.quadraticCurveTo(tailX * 0.3, -(halfW + belly), noseX * 0.35, -halfW * 0.55);
   s.closePath();
   return s;
+}
+
+/**
+ * Build gun barrels as separate line segments attached to the hull.
+ * Returns array of [startX, startY, endX, endY] quads.
+ */
+function makeGunBarrels(design: ShipDesignSnapshot): Array<[number, number, number, number]> {
+  const mass    = design.drive + design.weapons + design.shields + design.cargo
+                  + Math.max(0, design.attacks - 1) * design.weapons / 2;
+  const weapF   = mass > 0 ? Math.min(design.weapons / mass, 1) : 0;
+  const shieldF = mass > 0 ? Math.min(design.shields / mass, 1) : 0;
+  const driveF  = mass > 0 ? Math.min(design.drive / mass, 1) : 0;
+  const hullLen = 10 + driveF * 8;
+  const halfW   = 5  + shieldF * 6;
+
+  const count   = Math.min(design.attacks, 4);    // max 4 visible barrels
+  const barrelL = 3 + weapF * 14;                 // 3..17 — bigger weapons = longer barrels
+  const barrelY = halfW * 0.45;                    // attach point lateral offset
+  const attachX = hullLen * 0.4;                   // attach at ~40% from nose
+
+  const barrels: Array<[number, number, number, number]> = [];
+  if (count === 0 || design.weapons <= 0) return barrels;
+
+  if (count === 1) {
+    // Single centre-line cannon
+    barrels.push([attachX, 0, attachX + barrelL, 0]);
+  } else {
+    // Evenly distribute ±Y
+    for (let i = 0; i < count; i++) {
+      const t  = count === 1 ? 0 : (i / (count - 1) - 0.5) * 2;  // -1..+1
+      const y  = t * barrelY * 1.2;
+      barrels.push([attachX, y, attachX + barrelL, y]);
+    }
+  }
+  return barrels;
 }
 
 function esc(s: string): string {
@@ -41,6 +109,7 @@ interface VisShip {
   id: number; race: string; color: string; side: number;
   body: THREE.Mesh<THREE.ShapeGeometry, THREE.MeshBasicMaterial>;
   glow: THREE.Mesh<THREE.CircleGeometry, THREE.MeshBasicMaterial>;
+  barrels: THREE.Line<THREE.BufferGeometry, THREE.LineBasicMaterial>[];
   group: THREE.Group;
   baseX: number; baseY: number;
   alive: boolean; opacity: number; flash: number; dying: number;
@@ -153,6 +222,7 @@ export class BattleVisualizer {
       s.body.material.dispose();
       s.glow.geometry.dispose();
       s.glow.material.dispose();
+      for (const b of s.barrels) { b.geometry.dispose(); b.material.dispose(); }
     }
     this.floatingTexts.forEach(f => f.el.remove());
 
@@ -383,46 +453,72 @@ export class BattleVisualizer {
     let shipId = 0;
 
     this.record.participants.forEach((race, raceIdx) => {
-      const side      = raceIdx % 4;
-      const color     = this.getColor(race, raceIdx);
-      const angle     = this.getFleetAngle(side);
-      const initial   = this.record.initialShips[race] ?? 0;
-      const visCount  = Math.min(initial, MAX_VIS);
-      const positions = this.layoutFleet(visCount, side);
-      const showExtra = initial > MAX_VIS;
+      const side       = raceIdx % 4;
+      const color      = this.getColor(race, raceIdx);
+      const angle      = this.getFleetAngle(side);
+      const initial    = this.record.initialShips[race] ?? 0;
+      const visCount   = Math.min(initial, MAX_VIS);
+      const positions  = this.layoutFleet(visCount, side);
+      const showExtra  = initial > MAX_VIS;
       const extraCount = initial - MAX_VIS;
 
+      // Ship design for this race (fallback: generic warship)
+      const design: ShipDesignSnapshot = this.record.shipDesigns?.[race]
+        ?? { weapons: 2, shields: 1, drive: 2, cargo: 0, attacks: 1 };
+
+      // Pre-build shared geometries per race (same design for all ships in fleet)
+      const shipShape = makeShipShape(design);
+      const gunBarrelDefs = makeGunBarrels(design);
+
+      // Scale factor: keep ships at consistent visual size (~1 "cell")
+      const mass       = design.drive + design.weapons + design.shields + design.cargo
+                         + Math.max(0, design.attacks - 1) * design.weapons / 2;
+      const hullLen    = 10 + (mass > 0 ? Math.min(design.drive / mass, 1) : 0) * 8;
+      const scale      = 10 / Math.max(hullLen, 4);   // normalise so ~10 units wide
+
+      // Engine glow size scales with drive
+      const driveF     = mass > 0 ? Math.min(design.drive / mass, 1) : 0;
+      const glowR      = 4 + driveF * 6;
+      const tailX      = -(hullLen * 0.55);
+
       positions.forEach((pos, posIdx) => {
-        // Ship body
-        const bodyGeo = new THREE.ShapeGeometry(makeShipShape());
+        // Hull body
+        const bodyGeo = new THREE.ShapeGeometry(shipShape);
         const bodyMat = new THREE.MeshBasicMaterial({
           color: hexColor(color), transparent: true, opacity: 1,
           blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide,
         });
         const body = new THREE.Mesh(bodyGeo, bodyMat);
 
-        // Engine glow
-        const glowGeo = new THREE.CircleGeometry(7, 12);
+        // Engine glow (at tail)
+        const glowGeo = new THREE.CircleGeometry(glowR, 12);
         const glowMat = new THREE.MeshBasicMaterial({
-          color: hexColor(color), transparent: true, opacity: 0.4,
+          color: hexColor(color), transparent: true, opacity: 0.45,
           blending: THREE.AdditiveBlending, depthWrite: false,
         });
         const glow = new THREE.Mesh(glowGeo, glowMat);
-        glow.position.set(-10, 0, -0.1);
-
-        // Cockpit highlight
-        const cpGeo = new THREE.CircleGeometry(3, 8);
-        const cpMat = new THREE.MeshBasicMaterial({
-          color: 0xffffff, transparent: true, opacity: 0.3,
-          blending: THREE.AdditiveBlending, depthWrite: false,
-        });
-        const cockpit = new THREE.Mesh(cpGeo, cpMat);
-        cockpit.position.set(6, -1, 0.1);
+        glow.position.set(tailX - 1, 0, -0.1);
 
         const group = new THREE.Group();
         group.add(body);
         group.add(glow);
-        group.add(cockpit);
+
+        // Gun barrels (bright accent lines)
+        const barrels: THREE.Line<THREE.BufferGeometry, THREE.LineBasicMaterial>[] = [];
+        for (const [bx0, by0, bx1, by1] of gunBarrelDefs) {
+          const bGeo = new THREE.BufferGeometry();
+          bGeo.setAttribute('position', new THREE.BufferAttribute(
+            new Float32Array([bx0, by0, 0.2, bx1, by1, 0.2]), 3));
+          const bMat = new THREE.LineBasicMaterial({
+            color: 0xffffff, transparent: true, opacity: 0.85,
+            blending: THREE.AdditiveBlending, depthWrite: false,
+          });
+          const barrel = new THREE.Line(bGeo, bMat);
+          group.add(barrel);
+          barrels.push(barrel);
+        }
+
+        group.scale.set(scale, scale, 1);
         group.position.set(pos.x, pos.y, 1);
         group.rotation.z = angle;
         this.scene.add(group);
@@ -430,7 +526,7 @@ export class BattleVisualizer {
         const isGroupShip = showExtra && posIdx === 0;
         const ship: VisShip = {
           id: shipId++, race, color, side,
-          body, glow, group,
+          body, glow, barrels, group,
           baseX: pos.x, baseY: pos.y,
           alive: true, opacity: 1, flash: 0, dying: 0,
           sway: Math.random() * Math.PI * 2,
@@ -533,7 +629,8 @@ export class BattleVisualizer {
       const colorVal = ship.flash > 0 ? lightenHex(ship.color, ship.flash * 0.85) : hexColor(ship.color);
       ship.body.material.color.setHex(colorVal);
       ship.body.material.opacity = ship.opacity;
-      ship.glow.material.opacity = ship.opacity * 0.4;
+      ship.glow.material.opacity = ship.opacity * 0.45;
+      for (const b of ship.barrels) b.material.opacity = ship.opacity * 0.85;
 
       if (ship.flash > 0) ship.flash = Math.max(0, ship.flash - 0.07);
 

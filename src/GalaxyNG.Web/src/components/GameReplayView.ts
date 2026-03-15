@@ -1,4 +1,4 @@
-import type { BattleRecordDetail } from '../types/api.js';
+import type { BattleRecordDetail, ShipDesignSnapshot } from '../types/api.js';
 import { BattleVisualizer } from './BattleVisualizer.js';
 
 interface ReplayTurn {
@@ -22,6 +22,7 @@ interface GameJsonData {
       participants: string[];
       protocol: Array<{ attackerRace: string; defenderRace: string; killed: boolean }>;
       initialShips?: Record<string, number>;
+      shipDesigns?: Record<string, ShipDesignSnapshot>;
     }>;
   }>;
 }
@@ -73,6 +74,7 @@ export class GameReplayView {
           participants: b.participants,
           protocol:     b.protocol,
           initialShips: b.initialShips ?? {},
+          shipDesigns:  b.shipDesigns,
         })),
       }))
       .sort((a, b) => a.turn - b.turn);
